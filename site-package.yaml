@@ -1,0 +1,26 @@
+schemaVersion: "1.0"
+packageId: com.powercms.samples.react-dam
+name: 数字资源库
+version: 1.0.0
+cmsVersionRange: ">=12.0.0"
+siteKey: react-dam
+vendor:
+  name: PowerCMS Samples
+  contact: samples@powercms.local
+license:
+  spdx: MIT
+  name: MIT License
+templateRuntime:
+  type: REACT
+  nodeVersion: "20"
+entrypoints:
+  build: npm run build
+  output: dist
+requiredCapabilities:
+  - content-type
+  - template-react
+  - media
+  - search
+  - workflow
+# checksums 与 signature 由打包步骤注入（见 samples 目录旁的脚本）：
+# 源码目录本身不含摘要，必须经 SitePackageBuilder / scripts/validate-samples.ps1 打包后再导入。

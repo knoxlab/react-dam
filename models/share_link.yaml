@@ -1,0 +1,37 @@
+code: share_link
+name: 分发链接
+description: 带受众与失效时间的下载授权记录。真正的下载令牌由交付接口签发，这里不保存完整令牌。
+fields:
+  - code: asset_code_s
+    name: 资源编码
+    fieldType: STRING
+    required: true
+    groupName: 链接
+    filterable: true
+    adminIndex: true
+  - code: token_hint_s
+    name: 令牌尾号
+    fieldType: STRING
+    groupName: 链接
+    helpText: 只保存令牌末四位，便于核对，不能当作下载凭证。
+  - code: expires_at_dt
+    name: 失效时间
+    fieldType: DATE_TIME
+    required: true
+    groupName: 链接
+    sortable: true
+  - code: max_downloads_i
+    name: 最大下载次数
+    fieldType: INTEGER
+    groupName: 链接
+  - code: revoked_b
+    name: 已吊销
+    fieldType: BOOLEAN
+    groupName: 链接
+    filterable: true
+  - code: audience_s
+    name: 使用方
+    fieldType: STRING
+    required: true
+    groupName: 链接
+    helpText: 部门、外部应用或渠道名称，用于多应用复用时区分受众。

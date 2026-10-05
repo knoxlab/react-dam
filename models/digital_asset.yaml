@@ -1,0 +1,147 @@
+code: digital_asset
+name: 数字资源
+description: 图片、音视频、文档、PDF 与文本片段的统一目录。二进制文件由站点自动预置的 media_* 模型存储，本模型保存可检索的元数据。
+fields:
+  - code: asset_code_s
+    name: 资源编码
+    fieldType: STRING
+    required: true
+    groupName: 标识
+    uniqueField: true
+    adminIndex: true
+    publicIndex: true
+    filterable: true
+  - code: asset_kind_s
+    name: 资源类型
+    fieldType: ENUM
+    required: true
+    groupName: 标识
+    adminIndex: true
+    publicIndex: true
+    filterable: true
+    sortable: true
+    fieldConfig:
+      options:
+        - value: image
+          label: 图片
+        - value: video
+          label: 视频
+        - value: audio
+          label: 音频
+        - value: document
+          label: 文档
+        - value: pdf
+          label: PDF
+        - value: text
+          label: 文本片段
+  - code: summary_t
+    name: 摘要
+    fieldType: LONG_TEXT
+    required: true
+    groupName: 描述
+    publicIndex: true
+    highlight: true
+  - code: body_t
+    name: 正文或文本片段
+    fieldType: LONG_TEXT
+    groupName: 描述
+    helpText: 文本片段把正文直接放在这里；其他类型可写说明。
+  - code: mime_type_s
+    name: MIME 类型
+    fieldType: STRING
+    groupName: 文件
+    filterable: true
+  - code: file_size_i
+    name: 文件大小
+    fieldType: INTEGER
+    groupName: 文件
+    sortable: true
+    helpText: 单位为字节。
+  - code: storage_uri_s
+    name: 存储地址
+    fieldType: STRING
+    groupName: 文件
+    helpText: 指向 media_* 内容或对象存储键，不在前台直接暴露无鉴权原件。
+  - code: thumbnail_url_s
+    name: 预览图
+    fieldType: STRING
+    groupName: 文件
+  - code: tags_ss
+    name: 人工标签
+    fieldType: TAG
+    groupName: 分类
+    publicIndex: true
+  - code: ai_tags_ss
+    name: AI 标签
+    fieldType: TAG
+    groupName: 分类
+    publicIndex: true
+    helpText: 由管理端 POST /api/v1/ai/suggest/tags 生成后写入，与人工标签分开保存。
+  - code: copyright_owner_s
+    name: 版权方
+    fieldType: STRING
+    groupName: 版权
+    filterable: true
+    adminIndex: true
+  - code: license_s
+    name: 许可协议
+    fieldType: ENUM
+    groupName: 版权
+    filterable: true
+    fieldConfig:
+      options:
+        - value: all-rights
+          label: 保留所有权利
+        - value: internal
+          label: 内部使用
+        - value: cc-by
+          label: CC BY
+        - value: cc-by-sa
+          label: CC BY-SA
+        - value: public-domain
+          label: 公有领域
+  - code: copyright_until_dt
+    name: 版权到期
+    fieldType: DATE_TIME
+    groupName: 版权
+  - code: department_s
+    name: 所属部门
+    fieldType: STRING
+    required: true
+    groupName: 权限
+    filterable: true
+    adminIndex: true
+  - code: resource_group_s
+    name: 资源组
+    fieldType: STRING
+    required: true
+    groupName: 权限
+    filterable: true
+    helpText: 与 resource_group.group_code_s 对应，部门级隔离按资源组授权。
+  - code: version_label_s
+    name: 当前版本
+    fieldType: STRING
+    groupName: 版本
+  - code: approval_status_s
+    name: 审批状态
+    fieldType: ENUM
+    required: true
+    groupName: 版本
+    filterable: true
+    adminIndex: true
+    fieldConfig:
+      options:
+        - value: draft
+          label: 草稿
+        - value: pending
+          label: 待审批
+        - value: approved
+          label: 已通过
+        - value: rejected
+          label: 已驳回
+  - code: download_ttl_i
+    name: 下载链接有效期
+    fieldType: INTEGER
+    groupName: 分发
+    defaultValue: "300"
+    helpText: 单位为秒，对应签名下载链接的 TTL。

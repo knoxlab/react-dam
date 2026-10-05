@@ -1,0 +1,46 @@
+code: resource_group
+name: 资源组
+description: 按部门隔离数字资源的授权边界，并记录该组要求的加密备份策略。
+fields:
+  - code: group_code_s
+    name: 资源组编码
+    fieldType: STRING
+    required: true
+    groupName: 权限
+    uniqueField: true
+    adminIndex: true
+    filterable: true
+  - code: department_s
+    name: 部门
+    fieldType: STRING
+    required: true
+    groupName: 权限
+    filterable: true
+    adminIndex: true
+  - code: description_t
+    name: 说明
+    fieldType: LONG_TEXT
+    groupName: 权限
+  - code: acl_role_s
+    name: 授权角色
+    fieldType: STRING
+    required: true
+    groupName: 权限
+    helpText: 对应对象级 ACL 中可读取、下载该组资源的站点角色。
+  - code: encryption_required_b
+    name: 要求加密备份
+    fieldType: BOOLEAN
+    groupName: 安全
+    filterable: true
+  - code: backup_policy_s
+    name: 备份策略
+    fieldType: ENUM
+    groupName: 安全
+    fieldConfig:
+      options:
+        - value: encrypted-hourly
+          label: 每小时加密备份
+        - value: encrypted-daily
+          label: 每日加密备份
+        - value: encrypted-weekly
+          label: 每周加密备份

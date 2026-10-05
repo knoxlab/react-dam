@@ -1,0 +1,33 @@
+code: asset_version
+name: 资源版本
+description: 数字资源的业务版本记录，用于前台回溯。平台自身的内容版本仍在管理端按条目恢复。
+fields:
+  - code: asset_code_s
+    name: 资源编码
+    fieldType: STRING
+    required: true
+    groupName: 版本
+    adminIndex: true
+    filterable: true
+  - code: version_label_s
+    name: 版本号
+    fieldType: STRING
+    required: true
+    groupName: 版本
+  - code: change_note_t
+    name: 变更说明
+    fieldType: LONG_TEXT
+    required: true
+    groupName: 版本
+  - code: storage_uri_s
+    name: 该版本存储地址
+    fieldType: STRING
+    groupName: 文件
+  - code: file_size_i
+    name: 文件大小
+    fieldType: INTEGER
+    groupName: 文件
+  - code: actor_s
+    name: 提交人
+    fieldType: STRING
+    groupName: 版本
