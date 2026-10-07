@@ -59,9 +59,20 @@ fields:
     helpText: 单位为字节。
   - code: storage_uri_s
     name: 存储地址
-    fieldType: STRING
+    fieldType: MEDIA_REF
     groupName: 文件
     helpText: 指向 media_* 内容或对象存储键，不在前台直接暴露无鉴权原件。
+    fieldConfig:
+      allowedKinds:
+        - image
+        - video
+        - audio
+        - document
+      allowedContentTypes:
+        - media_image
+        - media_video
+        - media_audio
+        - media_document
   - code: thumbnail_url_s
     name: 预览图
     fieldType: STRING
@@ -117,7 +128,7 @@ fields:
     required: true
     groupName: 权限
     filterable: true
-    helpText: 与 resource_group.group_code_s 对应，部门级隔离按资源组授权。
+    helpText: 栏目名称，与站点文件夹标题一致，便于检索。授权在栏目上授予会员组，不由本字段判定。
   - code: version_label_s
     name: 当前版本
     fieldType: STRING

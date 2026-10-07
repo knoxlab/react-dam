@@ -12,6 +12,9 @@ export interface Asset {
   mime: string;
   bytes: number;
   storageUri: string;
+  thumbnail?: string;
+  width?: number;
+  height?: number;
   tags: string[];
   aiTags: string[];
   owner: string;
@@ -19,10 +22,13 @@ export interface Asset {
   copyrightUntil: string;
   department: string;
   group: string;
+  folderId: string;
   version: string;
   approval: Approval;
   downloadTtl: number;
   updatedAt: string;
+  /** 内容字段原文，供图片等字段按类型取回 Knox 资产编号。 */
+  values?: Record<string, string>;
 }
 
 export interface AssetVersion {
@@ -47,15 +53,23 @@ export interface ShareLink {
   audience: string;
 }
 
+export interface MemberGrant {
+  name: string;
+  code: string;
+  rights: string[];
+}
+
 export interface ResourceGroup {
   id: string;
   title: string;
   code: string;
+  path: string;
+  parentId?: string;
   department: string;
   description: string;
-  aclRole: string;
-  encryptionRequired: boolean;
-  backupPolicy: string;
+  grants: MemberGrant[];
+  /** 有效授权里匿名角色具备「查看」。栏目打破继承后只反映栏目自己的授权。 */
+  anonymousView?: boolean;
 }
 
 export interface Catalog {

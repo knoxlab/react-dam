@@ -1,6 +1,6 @@
 code: resource_group
 name: 资源组
-description: 按部门隔离数字资源的授权边界，并记录该组要求的加密备份策略。
+description: 兼容已导入站点的栏目名称快照。资源组的授权边界是站点栏目（文件夹），会员组权利在栏目权限中配置。
 fields:
   - code: group_code_s
     name: 资源组编码
@@ -26,7 +26,7 @@ fields:
     fieldType: STRING
     required: true
     groupName: 权限
-    helpText: 对应对象级 ACL 中可读取、下载该组资源的站点角色。
+    helpText: 会员组名称快照。实际授权写在对应站点栏目的对象权限上。
   - code: encryption_required_b
     name: 要求加密备份
     fieldType: BOOLEAN

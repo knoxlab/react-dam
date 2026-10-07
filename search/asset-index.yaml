@@ -15,7 +15,7 @@ filters:
   - field: department_s
     label: 部门
   - field: resource_group_s
-    label: 资源组
+    label: 栏目名称
   - field: license_s
     label: 许可协议
   - field: approval_status_s
