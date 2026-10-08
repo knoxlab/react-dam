@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { isSignedIn, MemberPage, MemberShell, folderTree, rememberReturn, rememberView, uploadFolders, useMemberStore, viewFolders, type MemberNav } from './account';
+import { isSignedIn, MemberPage, MemberShell, folderTree, noticeKind, rememberReturn, rememberView, uploadFolders, useMemberStore, viewFolders, type MemberNav, type NoticeKind } from './account';
 import { loadAnonymousLibrary, loadCatalog, siteIdFromLocation } from './api';
 import { formatBytes } from './format';
 import { AskPage } from './pages/AskPage';
@@ -27,7 +27,7 @@ const NAV: { group: string; items: { id: NavId; label: string }[] }[] = [
   }
 ];
 
-const PAGES: NavId[] = ['library', 'upload', 'detail', 'ask', 'account', 'password', 'uploads', 'shares', 'favorites', 'history', 'login', 'register'];
+const PAGES: NavId[] = ['library', 'upload', 'detail', 'ask', 'account', 'password', 'uploads', 'shares', 'favorites', 'history', 'inbox', 'login', 'register'];
 
 function isPublicPage(id: string) {
   return id === 'login' || id === 'register';
@@ -37,9 +37,9 @@ function guestMayBrowse(page: string, anonymousLibrary: boolean) {
   return anonymousLibrary && (page === 'library' || page === 'detail');
 }
 
-function hashPage(token: string): { page: NavId; assetId: string } {
+function hashPage(token: string): { page: NavId; assetId: string; inbox: NoticeKind } {
   const raw = token.replace(/^#/, '');
-  if (raw === 'logs') return { page: 'shares', assetId: '' };
+  if (raw === 'logs') return { page: 'shares', assetId: '', inbox: 'message' };
   const slash = raw.indexOf('/');
   const head = slash < 0 ? raw : raw.slice(0, slash);
   let tail = slash < 0 ? '' : raw.slice(slash + 1);
@@ -49,11 +49,13 @@ function hashPage(token: string): { page: NavId; assetId: string } {
     /* 地址里的资源编号保持原样 */
   }
   const page = PAGES.includes(head as NavId) ? (head as NavId) : 'library';
-  return { page, assetId: page === 'detail' ? tail : '' };
+  return { page, assetId: page === 'detail' ? tail : '', inbox: page === 'inbox' ? noticeKind(tail) : 'message' };
 }
 
-function returnToken(page: NavId, assetId: string) {
-  return page === 'detail' && assetId ? `detail/${encodeURIComponent(assetId)}` : page;
+function returnToken(page: NavId, assetId: string, inbox: NoticeKind = 'message') {
+  if (page === 'detail' && assetId) return `detail/${encodeURIComponent(assetId)}`;
+  if (page === 'inbox') return `inbox/${inbox}`;
+  return page;
 }
 
 function applyAddress(siteId: string, hash: string) {
@@ -68,7 +70,7 @@ function applyAddress(siteId: string, hash: string) {
 function startNav(): NavId {
   const next = hashPage(location.hash);
   if (!isSignedIn() && !isPublicPage(next.page) && next.page !== 'library' && next.page !== 'detail') {
-    rememberReturn(next.page);
+    rememberReturn(returnToken(next.page, next.assetId, next.inbox));
     return 'login';
   }
   return next.page;
@@ -81,6 +83,7 @@ export function App() {
   const [catalog, setCatalog] = useState<Catalog>(SEED);
   const [source, setSource] = useState<DataSource>('loading');
   const [selectedId, setSelectedId] = useState<string | null>(opened.assetId || null);
+  const [inbox, setInbox] = useState<NoticeKind>(opened.inbox);
   const [libraryFolders, setLibraryFolders] = useState<string[]>([]);
   const [anonymousLibrary, setAnonymousLibrary] = useState(false);
   const [accessReady, setAccessReady] = useState(!siteId);
@@ -132,7 +135,7 @@ export function App() {
     if (!accessReady || isSignedIn()) return;
     if (isPublicPage(nav) || guestMayBrowse(nav, anonymousLibrary)) return;
     const located = hashPage(location.hash);
-    rememberReturn(returnToken(located.page === 'library' || located.page === 'detail' ? located.page : nav, located.assetId || selectedId || ''));
+    rememberReturn(returnToken(located.page === 'library' || located.page === 'detail' ? located.page : nav, located.assetId || selectedId || '', located.page === 'inbox' ? located.inbox : inbox));
     setNav('login');
     applyAddress(siteId, '#login');
   }, [accessReady, anonymousLibrary, nav, selectedId, siteId]);
@@ -141,15 +144,16 @@ export function App() {
     const onHash = () => {
       const next = hashPage(location.hash);
       if (next.assetId) setSelectedId(next.assetId);
+      if (next.page === 'inbox') setInbox(next.inbox);
       if (!isSignedIn() && !isPublicPage(next.page) && !(accessReady && guestMayBrowse(next.page, anonymousLibrary))) {
         if (next.page !== 'library' && next.page !== 'detail') {
-          rememberReturn(next.page);
+          rememberReturn(returnToken(next.page, next.assetId, next.inbox));
           setNav('login');
           applyAddress(siteId, '#login');
           return;
         }
         if (accessReady) {
-          rememberReturn(returnToken(next.page, next.assetId));
+          rememberReturn(returnToken(next.page, next.assetId, next.inbox));
           setNav('login');
           applyAddress(siteId, '#login');
           return;
@@ -172,10 +176,15 @@ export function App() {
     const assetId = requested.page === 'detail' ? (requested.assetId || selectedId || '') : '';
     const guestOk = isPublicPage(requested.page) || guestMayBrowse(requested.page, anonymousLibrary);
     const target: NavId = !isSignedIn() && !guestOk ? 'login' : requested.page;
-    if (target === 'login' && !isPublicPage(requested.page)) rememberReturn(returnToken(requested.page, assetId));
+    if (target === 'login' && !isPublicPage(requested.page)) rememberReturn(returnToken(requested.page, assetId, requested.inbox));
     if (requested.page === 'detail' && assetId) setSelectedId(assetId);
+    if (requested.page === 'inbox') setInbox(requested.inbox);
     setNav(target);
-    const hash = target === 'detail' && assetId ? `#detail/${encodeURIComponent(assetId)}` : `#${target}`;
+    const hash = target === 'detail' && assetId
+      ? `#detail/${encodeURIComponent(assetId)}`
+      : target === 'inbox'
+        ? `#inbox/${requested.inbox}`
+        : `#${target}`;
     applyAddress(siteId, hash);
     setDrawer(false);
     const main = document.querySelector('.main');
@@ -310,8 +319,8 @@ export function App() {
           />
         ) : null}
         {shown === 'ask' ? <AskPage catalog={catalog} siteId={siteId} /> : null}
-        {shown === 'account' || shown === 'password' || shown === 'uploads' || shown === 'shares' || shown === 'favorites' || shown === 'history' || shown === 'login' || shown === 'register' ? (
-          <MemberPage mode={shown} catalog={catalog} siteId={siteId} onOpen={openAsset} />
+        {shown === 'account' || shown === 'password' || shown === 'uploads' || shown === 'shares' || shown === 'favorites' || shown === 'history' || shown === 'inbox' || shown === 'login' || shown === 'register' ? (
+          <MemberPage mode={shown} catalog={catalog} siteId={siteId} inbox={inbox} onOpen={openAsset} />
         ) : null}
       </main>
 

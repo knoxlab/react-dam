@@ -95,6 +95,8 @@ function toAsset(row: ContentRow): Asset {
     approval: oneOf(text(fields, 'approval_status_s'), APPROVALS, 'draft'),
     downloadTtl: number(fields, 'download_ttl_i') || 300,
     updatedAt: text(row, 'updatedAt'),
+    viewCount: number(fields, 'viewCount'),
+    publishedAt: text(fields, 'createdAt') || text(row, 'updatedAt'),
     values: fieldValues(fields)
   };
 }
@@ -401,6 +403,208 @@ async function requireMemberOk(res: Response) {
   if (!res.ok) throw new Error(await apiError(res));
 }
 
+export type InboxMail = { id: string; body: string; time: string; mine?: boolean };
+export type InboxNotice = {
+  id: string;
+  kind: 'message' | 'comment' | 'fan' | 'like';
+  actor: string;
+  hue: string;
+  title: string;
+  time: string;
+  read: boolean;
+  action?: string | null;
+  body?: string | null;
+  quote?: string | null;
+  official?: boolean;
+  earlier?: boolean;
+  mails?: InboxMail[] | null;
+  messageId?: string | null;
+};
+
+export async function loadMemberInbox(siteId: string): Promise<InboxNotice[]> {
+  const res = await memberLibrary(siteId, '/inbox');
+  await requireMemberOk(res);
+  const body = await res.json() as { notices?: InboxNotice[] };
+  return Array.isArray(body.notices) ? body.notices : [];
+}
+
+export async function markMemberInboxRead(siteId: string, notificationIds: string[]) {
+  const res = await memberLibrary(siteId, '/inbox/read', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notificationIds })
+  });
+  await requireMemberOk(res);
+}
+
+export async function replyMemberComment(siteId: string, messageId: string, body: string) {
+  const res = await memberLibrary(siteId, `/inbox/comments/${encodeURIComponent(messageId)}/replies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body })
+  });
+  await requireMemberOk(res);
+}
+
+/** 给一条互动消息点赞/取消点赞，返回服务端认可后的最新点赞数。 */
+export async function likeMemberComment(siteId: string, messageId: string): Promise<ContentCommentLike> {
+  const res = await fetch(`/api/v1/public/sites/${encodeURIComponent(siteId)}/interaction/messages/${encodeURIComponent(messageId)}/like`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'X-Language': 'zh-CN' }
+  });
+  if (!res.ok) throw new Error(await apiError(res));
+  const body = await res.json() as { messageId?: string; likeCount?: number; liked?: boolean };
+  return { id: String(body.messageId ?? messageId), likeCount: Number(body.likeCount ?? 0) || 0, liked: Boolean(body.liked) };
+}
+
+export type ContentCommentLike = { id: string; likeCount: number; liked: boolean };
+
+export type ContentActions = {
+  likeCount: number;
+  favoriteCount: number;
+  commentCount: number;
+  liked: boolean;
+  favorited: boolean;
+};
+
+export async function loadContentActions(siteId: string, contentId: string): Promise<ContentActions> {
+  const res = await fetch(`/api/v1/delivery/sites/${encodeURIComponent(siteId)}/contents/${encodeURIComponent(contentId)}/actions`, {
+    credentials: 'include',
+    cache: 'no-store',
+    headers: { Accept: 'application/json', 'X-Language': 'zh-CN' }
+  });
+  if (res.status === 404 || res.status === 405) throw new Error(MEMBER_LIBRARY_MISSING);
+  if (!res.ok) throw new Error(await apiError(res));
+  return res.json() as Promise<ContentActions>;
+}
+
+export async function toggleContentLike(siteId: string, contentId: string): Promise<ContentActions> {
+  const res = await fetch(`/api/v1/delivery/sites/${encodeURIComponent(siteId)}/contents/${encodeURIComponent(contentId)}/like`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'X-Language': 'zh-CN' }
+  });
+  if (res.status === 404 || res.status === 405) throw new Error(MEMBER_LIBRARY_MISSING);
+  if (!res.ok) throw new Error(await apiError(res));
+  return res.json() as Promise<ContentActions>;
+}
+
+export type ContentComment = {
+  id: string;
+  parentId: string;
+  authorName: string;
+  body: string;
+  createdAt: string;
+  likeCount: number;
+  replyCount: number;
+  replies: ContentComment[];
+};
+
+function toComment(raw: Record<string, unknown>): ContentComment {
+  const createdAt = raw.createdAt instanceof Date ? raw.createdAt.toISOString() : String(raw.createdAt ?? '');
+  return {
+    id: String(raw.id ?? ''),
+    parentId: raw.parentId ? String(raw.parentId) : '',
+    authorName: String(raw.authorName ?? '匿名'),
+    body: String(raw.body ?? ''),
+    createdAt,
+    likeCount: Number(raw.likeCount ?? 0) || 0,
+    replyCount: Number(raw.replyCount ?? 0) || 0,
+    replies: Array.isArray(raw.replies) ? raw.replies.map((item) => toComment(item as Record<string, unknown>)) : []
+  };
+}
+
+export async function loadContentComments(siteId: string, contentId: string): Promise<{ total: number; items: ContentComment[] }> {
+  const params = new URLSearchParams({ threadType: 'CONTENT', threadId: contentId, size: '20' });
+  const res = await fetch(`/api/v1/public/sites/${encodeURIComponent(siteId)}/interaction/comments?${params}`, {
+    credentials: 'include',
+    cache: 'no-store'
+  });
+  if (!res.ok) throw new Error(await apiError(res));
+  const body = await res.json() as { total?: number; items?: unknown[] };
+  return {
+    total: body.total ?? 0,
+    items: (body.items ?? []).map((item) => toComment(item as Record<string, unknown>))
+  };
+}
+
+/**
+ * 人机验证：后端 {@code InteractionCrypto} 要求 SHA-256(令牌 + 随机串) 的十六进制以两个 0 开头，
+ * 这里递增随机串求解，一般几十次内命中。
+ */
+export async function solveInteractionCaptcha(token: string): Promise<string> {
+  const encoder = new TextEncoder();
+  for (let nonce = 0; nonce < 4_000_000; nonce += 1) {
+    const value = String(nonce);
+    const digest = await crypto.subtle.digest('SHA-256', encoder.encode(token + value));
+    const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (hex.startsWith('00')) return value;
+  }
+  throw new Error('人机验证未通过，请稍后重试');
+}
+
+/** 评论提交结果：返回消息 id，调用方刷新列表后按 id 判断是否已公开（未公开即待审核）。 */
+export type ContentCommentResult = { id: string };
+
+export async function submitContentComment(
+  siteId: string,
+  contentId: string,
+  body: string,
+  options: { authorName?: string; parentId?: string } = {}
+): Promise<ContentCommentResult> {
+  const params = new URLSearchParams({ kind: 'COMMENT', codeOrId: contentId });
+  const tokenRes = await fetch(`/api/v1/public/sites/${encodeURIComponent(siteId)}/interaction/submission-token?${params}`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'X-Language': 'zh-CN' }
+  });
+  if (!tokenRes.ok) throw new Error(await apiError(tokenRes));
+  const tokenInfo = await tokenRes.json() as { token?: string; captchaRequired?: boolean };
+  if (!tokenInfo.token) throw new Error('没拿到提交令牌，请刷新页面后重试');
+  const captchaNonce = tokenInfo.captchaRequired ? await solveInteractionCaptcha(tokenInfo.token) : '';
+
+  const res = await fetch(`/api/v1/public/sites/${encodeURIComponent(siteId)}/interaction/comments`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-Language': 'zh-CN' },
+    body: JSON.stringify({
+      threadType: 'CONTENT',
+      threadId: contentId,
+      parentId: options.parentId || null,
+      body,
+      authorName: options.authorName || '',
+      honeypot: '',
+      submissionToken: tokenInfo.token,
+      captchaNonce
+    })
+  });
+  if (!res.ok) throw new Error(await apiError(res));
+  const message = await res.json() as { id?: string };
+  return { id: message.id ?? '' };
+}
+
+export async function recordContentView(siteId: string, contentId: string): Promise<number | null> {
+  const res = await fetch(`/api/v1/delivery/sites/${encodeURIComponent(siteId)}/contents/${encodeURIComponent(contentId)}/views`, {
+    method: 'POST',
+    credentials: 'include'
+  });
+  if (!res.ok) return null;
+  const body = await res.json() as { viewCount?: number };
+  return typeof body.viewCount === 'number' ? body.viewCount : null;
+}
+
+export async function downloadContentFile(siteId: string, mediaId: string) {
+  const res = await fetch(`/api/v1/delivery/sites/${encodeURIComponent(siteId)}/media/${encodeURIComponent(mediaId)}/download-token`, {
+    method: 'POST',
+    credentials: 'include'
+  });
+  if (res.status === 404) throw new Error('当前没有下载权限');
+  if (!res.ok) throw new Error(await apiError(res));
+  const body = await res.json() as { url?: string };
+  if (!body.url) throw new Error('没有拿到下载地址');
+  window.open(body.url, '_blank', 'noopener');
+}
+
 export async function changeMemberPassword(siteId: string, currentPassword: string, newPassword: string) {
   const res = await memberLibrary(siteId, '/password', {
     method: 'POST',
@@ -485,6 +689,12 @@ export async function loadMemberUploads(siteId: string): Promise<MemberUpload[]>
     status: row.status ?? '',
     updatedAt: row.updatedAt ?? ''
   }));
+}
+
+/** 删除自己上传的资源（服务端校验创建者身份，级联清理版本/分享/收藏与检索文档）。 */
+export async function deleteMemberUpload(siteId: string, contentId: string) {
+  const res = await memberLibrary(siteId, `/uploads/${encodeURIComponent(contentId)}`, { method: 'DELETE' });
+  await requireMemberOk(res);
 }
 
 export async function loadMemberFavorites(siteId: string): Promise<MemberMark[]> {

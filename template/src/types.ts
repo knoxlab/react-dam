@@ -27,6 +27,9 @@ export interface Asset {
   approval: Approval;
   downloadTtl: number;
   updatedAt: string;
+  viewCount?: number;
+  /** 内容创建时间，详情页作为发布日期展示。 */
+  publishedAt?: string;
   /** 内容字段原文，供图片等字段按类型取回 Knox 资产编号。 */
   values?: Record<string, string>;
 }

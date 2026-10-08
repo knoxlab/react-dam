@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Asset } from '../types';
 import {
-  addressLabel,
   frameOf,
-  layoutLabel,
   loadKnoxPlayUrl,
   mediaAssetId,
   pdfFrame,
@@ -146,16 +144,11 @@ export function PreviewPane(props: {
         />
       </div>
       <div className="preview-bar">
-        <span className="badge badge-primary">{layoutLabel(kind, props.orientation)}</span>
-        {kind === 'audio' || kind === 'text' || !frame ? null : (
-          <span className="num" style={{ fontSize: 13, fontWeight: 500 }}>
-            {frame.w} × {frame.h}
-          </span>
-        )}
-        <span className="num" style={{ fontSize: 12, fontWeight: 500 }} title={props.asset.storageUri || src}>
-          {props.asset.storageUri ? storageLabel(props.asset.storageUri) : (addressLabel(src) || '没有媒体引用')}
+        <span className="preview-facts">
+          {kind !== 'audio' && kind !== 'text' && frame ? <span>{frame.w} × {frame.h}</span> : null}
+          <span>{kind === 'video' ? '播放' : '浏览'} {factCount(props.asset.viewCount)}</span>
+          <span>发布于 {publishDay(props.asset.publishedAt || props.asset.updatedAt)}</span>
         </span>
-        <span style={{ fontSize: 12, color: 'var(--text-2)' }}>{playbackText(playback, kind)}</span>
         <span className="grow" />
         {props.extra}
       </div>
@@ -257,27 +250,19 @@ function initialSrc(asset: Asset): string {
   return previewTarget(asset).url;
 }
 
-function storageLabel(raw: string): string {
-  const text = raw.trim();
-  if (text.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(text) as { assetId?: string; kind?: string };
-      if (parsed.assetId) return `媒体引用 ${parsed.kind ? parsed.kind + ' ' : ''}${parsed.assetId.slice(0, 8)}`;
-    } catch {
-      /* 原样展示 */
-    }
+function factCount(value: number | undefined): string {
+  const count = Number.isFinite(value) ? Math.max(0, Math.floor(value as number)) : 0;
+  if (count >= 10000) {
+    const wan = count / 10000;
+    return `${wan.toFixed(wan >= 10 ? 0 : 1)}万`;
   }
-  return text;
+  return String(count);
 }
 
-function playbackText(playback: Playback, kind: PreviewKind): string {
-  if (kind !== 'video' && kind !== 'audio') {
-    return playback === 'loading' ? '正在加载预览' : '预览已加载';
-  }
-  if (playback === 'playing') return '正在播放';
-  if (playback === 'muted') return '浏览器限制有声自动播放，已静音播放';
-  if (playback === 'blocked') return '浏览器未允许自动播放，可点击控件开始';
-  if (playback === 'paused') return '已暂停';
-  if (playback === 'ended') return '播放结束';
-  return '正在加载预览';
+function publishDay(iso: string | undefined): string {
+  if (!iso) return '—';
+  const text = iso.trim();
+  if (text.length >= 16) return text.slice(0, 16).replace('T', ' ');
+  if (text.length >= 10) return text.slice(0, 10);
+  return text;
 }

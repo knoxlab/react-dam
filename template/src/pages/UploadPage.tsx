@@ -8,7 +8,7 @@ import {
   type ContentFormNode
 } from '../api';
 import { formatBytes } from '../format';
-import { mediaAssetId } from '../preview';
+import { externalUrl, mediaAssetId } from '../preview';
 import type { AssetKind, ResourceGroup } from '../types';
 import { Page, UploadIcon } from '../ui';
 import { KnoxImage } from './KnoxImage';
@@ -487,6 +487,17 @@ function FieldInput(props: {
   onChange: (value: string) => void;
 }) {
   const { field, value, onChange } = props;
+  if (field.fieldType === 'MEDIA_REF') {
+    return (
+      <MediaRefInput
+        siteId={props.siteId}
+        folderId={props.folderId}
+        value={value}
+        readOnly={field.readOnly}
+        onChange={onChange}
+      />
+    );
+  }
   if (field.fieldType === 'IMAGE') {
     return (
       <ImageInput
@@ -592,6 +603,72 @@ function ImageInput(props: {
   );
 }
 
+/**
+ * MEDIA_REF（原件引用）字段：会员把原件传到 Knox-Media 后写入资产 id。
+ * 后端只接受「资产 id / mediaRef JSON / 外部 http(s) 地址」，media:// 之类的占位串保存会被拒，
+ * 因此这里默认写入上传返回的 assetId，而不是文件名。
+ */
+function MediaRefInput(props: {
+  siteId: string;
+  folderId: string;
+  value: string;
+  readOnly?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
+  const assetId = mediaAssetId(props.value);
+  const external = externalUrl(props.value);
+  const bound = assetId || external;
+  return (
+    <span className="media-ref-field">
+      <span className={bound ? 'chip chip-primary' : props.value ? 'chip chip-warn' : 'chip chip-flat'}>
+        {assetId
+          ? `已绑定原件 ${assetId.slice(0, 8)}…`
+          : external
+            ? `外部地址 ${props.value}`
+            : props.value
+              ? `引用无法识别：${props.value}`
+              : '还没有绑定原件'}
+      </span>
+      {props.readOnly ? null : (
+        <>
+          <input
+            ref={inputRef}
+            type="file"
+            hidden
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (!file) return;
+              if (!props.siteId || !props.folderId) {
+                setNote('缺少栏目，无法上传');
+                return;
+              }
+              setBusy(true);
+              setNote('正在上传原件到 Knox-Media');
+              const job = new AbortController();
+              void uploadMemberFile(props.siteId, props.folderId, file, (percent) => {
+                setNote(`正在上传 ${percent}%`);
+              }, job.signal).then((stored) => {
+                props.onChange(stored.assetId);
+                setNote('已绑定原件；媒体处理就绪后即可预览与下载');
+              }).catch((reason: unknown) => {
+                setNote(reason instanceof Error ? reason.message : '上传失败');
+              }).finally(() => setBusy(false));
+            }}
+          />
+          <button className="btn btn-ghost btn-sm" type="button" disabled={busy} onClick={() => inputRef.current?.click()}>
+            {busy ? '上传中…' : bound ? '更换原件' : '上传原件'}
+          </button>
+        </>
+      )}
+      {note ? <span className="media-ref-note">{note}</span> : null}
+    </span>
+  );
+}
+
 function collectFields(nodes: ContentFormNode[]): ContentFormField[] {
   const fields: ContentFormField[] = [];
   for (const node of nodes) {
@@ -610,7 +687,7 @@ function initialValues(fields: ContentFormField[], item: QueueItem, folderTitle:
     if (field.code === 'asset_kind_s') value = item.kind;
     if (field.code === 'resource_group_s' && folderTitle) value = folderTitle;
     if (field.code === 'asset_code_s' && !value) value = item.name.replace(/\.[^.]+$/, '') || item.name;
-    if (field.fieldType === 'MEDIA_REF' && !value) value = item.name;
+    if (field.fieldType === 'MEDIA_REF' && !value) value = item.assetId;
     values[field.code] = value;
   }
   return values;

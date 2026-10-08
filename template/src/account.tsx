@@ -1,12 +1,48 @@
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { changeMemberPassword, frontendLogin, frontendLogout, issueMemberShare, loadCurrentMember, loadMemberFavorites, loadMemberHistory, loadMemberRegistration, loadMemberShares, loadMemberUploads, recordMemberView, revokeMemberShare, saveMemberFavorite, siteIdFromLocation, submitMemberRegistration, type MemberField, type MemberShare, type MemberUpload } from './api';
+import { changeMemberPassword, deleteMemberUpload, frontendLogin, frontendLogout, issueMemberShare, likeMemberComment, loadCurrentMember, loadMemberFavorites, loadMemberHistory, loadMemberInbox, loadMemberRegistration, loadMemberShares, loadMemberUploads, markMemberInboxRead, recordMemberView, replyMemberComment, revokeMemberShare, saveMemberFavorite, siteIdFromLocation, submitMemberRegistration, type InboxNotice, type MemberField, type MemberShare, type MemberUpload } from './api';
 import type { Asset, Catalog, ResourceGroup } from './types';
 import { formatBytes, formatWhen, kindLabel } from './format';
 import { Page, UploadIcon } from './ui';
 
-export type MemberNav = 'account' | 'password' | 'uploads' | 'shares' | 'favorites' | 'history' | 'login' | 'register';
+export type MemberNav = 'account' | 'password' | 'uploads' | 'shares' | 'favorites' | 'history' | 'inbox' | 'login' | 'register';
 
-type Notice = { id: string; title: string; time: string; read: boolean };
+export type NoticeKind = 'message' | 'comment' | 'fan' | 'like';
+
+export const NOTICE_TABS: { id: NoticeKind; label: string; empty: string }[] = [
+  { id: 'message', label: '消息私信', empty: '暂无消息' },
+  { id: 'comment', label: '评论和@', empty: '暂无评论' },
+  { id: 'fan', label: '粉丝', empty: '粉丝功能暂未开放' },
+  { id: 'like', label: '点赞', empty: '暂无点赞' }
+];
+
+export function noticeKind(value: string | undefined): NoticeKind {
+  if (value === 'comment' || value === 'fan' || value === 'like') return value;
+  return 'message';
+}
+
+function unreadText(count: number) {
+  if (count > 99) return '99+';
+  return String(count);
+}
+
+type MailLine = { id: string; body: string; time: string; mine?: boolean };
+
+type Notice = {
+  id: string;
+  kind: NoticeKind;
+  title: string;
+  time: string;
+  read: boolean;
+  actor: string;
+  hue: string;
+  action?: string;
+  body?: string;
+  quote?: string;
+  official?: boolean;
+  earlier?: boolean;
+  mails?: MailLine[];
+  messageId?: string;
+};
 type Member = { name: string; username: string; groups: string[]; groupCodes: string[]; signedIn: boolean };
 type HistoryItem = { id: string; at: string };
 
@@ -16,6 +52,8 @@ type Store = {
   favorites: string[];
   history: HistoryItem[];
   libraryUnavailable: boolean;
+  inboxLive: boolean;
+  inboxError: string;
 };
 
 const KEY = 'dam.member.space';
@@ -23,13 +61,71 @@ const KEY = 'dam.member.space';
 const DEFAULT_STORE: Store = {
   member: { name: '', username: '', groups: [], groupCodes: [], signedIn: false },
   notices: [
-    { id: 'n1', title: '安装手册已通过审批', time: '2 小时前', read: false },
-    { id: 'n2', title: '品牌影像库有新的下载授权', time: '昨天', read: false },
-    { id: 'n3', title: '一条分发链接将在 3 天后失效', time: '3 天前', read: true }
+    {
+      id: 'n1', kind: 'message', actor: '资源云', hue: '#5b8ff9', official: true, earlier: false,
+      title: '安装手册已通过审批，可以下载原件。', time: '10-05', read: false,
+      mails: [
+        { id: 'n1a', body: '安装手册已通过审批，可以下载原件。', time: '10-05 11:20' },
+        { id: 'n1b', body: '品牌影像库已开放下载授权，有效期 7 天。', time: '10-05 16:08' }
+      ]
+    },
+    {
+      id: 'n2', kind: 'message', actor: '市场部', hue: '#61d2a0', earlier: false,
+      title: '发布会主旨演讲的字幕时间轴需要再对一下。', time: '09-28', read: true,
+      mails: [
+        { id: 'n2a', body: '发布会主旨演讲的字幕时间轴需要再对一下。', time: '09-28 09:16' }
+      ]
+    },
+    {
+      id: 'n3', kind: 'message', actor: '品牌部', hue: '#f6bd16', earlier: true,
+      title: '一条分发链接将在 3 天后失效。', time: '09-08', read: true,
+      mails: [
+        { id: 'n3a', body: '一条分发链接将在 3 天后失效，需要的话请重新签发。', time: '09-08 18:42' }
+      ]
+    },
+    {
+      id: 'c1', kind: 'comment', actor: '市场部', hue: '#61d2a0', action: '回复了我的评论',
+      title: '这条片子的字幕时间轴需要再对一下。', time: '10-07 16:20', read: false,
+      body: '这条片子的字幕时间轴需要再对一下。',
+      quote: '发布会主旨演讲已挂到品牌影像库，字幕稍后补。'
+    },
+    {
+      id: 'c2', kind: 'comment', actor: '品牌部', hue: '#f6bd16', action: '回复了我的评论',
+      title: '安装手册里的授权说明可以沿用上一版。', time: '10-06 09:03', read: true,
+      body: '安装手册里的授权说明可以沿用上一版。',
+      quote: '新版本手册是否要重写下载授权那段？'
+    },
+    {
+      id: 'f1', kind: 'fan', actor: '市场部', hue: '#61d2a0', title: '市场部', time: '2024-08-07 20:09', read: false
+    },
+    {
+      id: 'f2', kind: 'fan', actor: '品牌部', hue: '#f6bd16', title: '品牌部', time: '2022-03-14 22:10', read: true
+    },
+    {
+      id: 'f3', kind: 'fan', actor: '产品部', hue: '#7262fd', title: '产品部', time: '2021-11-07 07:01', read: true
+    },
+    {
+      id: 'f4', kind: 'fan', actor: '研发部', hue: '#78d3f8', title: '研发部', time: '2021-11-05 19:21', read: true
+    },
+    {
+      id: 'f5', kind: 'fan', actor: '平台组', hue: '#9661bc', title: '平台组', time: '2021-04-10 12:39', read: true
+    },
+    {
+      id: 'l1', kind: 'like', actor: '品牌部', hue: '#f6bd16', action: '赞了我的评论',
+      title: '安装手册已挂到品牌影像库。', time: '10-06 14:44', read: false,
+      quote: '安装手册已挂到品牌影像库，下载授权沿用上一版。'
+    },
+    {
+      id: 'l2', kind: 'like', actor: '市场部', hue: '#61d2a0', action: '赞了我的评论',
+      title: '发布会主旨演讲的摘要已更新。', time: '10-05 10:31', read: false,
+      quote: '发布会主旨演讲的摘要已更新，片花仍在审核。'
+    }
   ],
   favorites: [],
   history: [],
-  libraryUnavailable: false
+  libraryUnavailable: false,
+  inboxLive: false,
+  inboxError: ''
 };
 
 let store: Store = load();
@@ -93,26 +189,81 @@ function groupLabel(member: Member) {
   return member.groups.length ? member.groups.join('、') : '未加入会员组';
 }
 
+function readNotices(raw: Notice[] | undefined): Notice[] {
+  const saved = new Map((raw ?? []).filter((item) => item?.id).map((item) => [item.id, item]));
+  return DEFAULT_STORE.notices.map((item) => {
+    const prev = saved.get(item.id);
+    if (!prev) return item;
+    const mails = Array.isArray(prev.mails) && prev.mails.length ? prev.mails : item.mails;
+    return { ...item, read: Boolean(prev.read), mails };
+  });
+}
+
+const SEEN_KEY = 'dam.member.inbox.seen';
+
+function readSeen(): Set<string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SEEN_KEY) || '[]') as unknown;
+    return new Set(Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function rememberSeen(id: string) {
+  const seen = readSeen();
+  seen.add(id);
+  localStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-400)));
+}
+
+function applySeen(rows: InboxNotice[]): Notice[] {
+  const seen = readSeen();
+  return rows.map((item) => ({
+    id: item.id,
+    kind: item.kind,
+    actor: item.actor,
+    hue: item.hue,
+    title: item.title,
+    time: item.time,
+    read: Boolean(item.read) || seen.has(item.id),
+    action: item.action || undefined,
+    body: item.body || undefined,
+    quote: item.quote || undefined,
+    official: Boolean(item.official),
+    earlier: Boolean(item.earlier),
+    mails: item.mails?.length ? item.mails : undefined,
+    messageId: item.messageId || undefined
+  }));
+}
+
+function unreadCount(notices: Notice[], kind?: NoticeKind) {
+  return notices.filter((item) => item.kind !== 'fan' && !item.read && (!kind || item.kind === kind)).length;
+}
+
 function load(): Store {
+  const live = Boolean(siteIdFromLocation());
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return DEFAULT_STORE;
+    if (!raw) return { ...DEFAULT_STORE, notices: live ? [] : DEFAULT_STORE.notices, inboxLive: live };
     const parsed = JSON.parse(raw) as Partial<Store>;
     return {
       member: readMember(parsed.member),
-      notices: parsed.notices?.length ? parsed.notices : DEFAULT_STORE.notices,
+      notices: live ? [] : readNotices(parsed.notices),
       favorites: [],
       history: [],
-      libraryUnavailable: false
+      libraryUnavailable: false,
+      inboxLive: live,
+      inboxError: ''
     };
   } catch {
-    return DEFAULT_STORE;
+    return { ...DEFAULT_STORE, notices: live ? [] : DEFAULT_STORE.notices, inboxLive: live };
   }
 }
 
 function update(patch: Partial<Store>) {
   store = { ...store, ...patch };
-  localStorage.setItem(KEY, JSON.stringify(store));
+  const saved = store.inboxLive ? { ...store, notices: [] } : store;
+  localStorage.setItem(KEY, JSON.stringify(saved));
   listeners.forEach((listener) => listener());
 }
 
@@ -174,19 +325,60 @@ export async function syncLibrary(siteId: string) {
   }
 }
 
+export async function syncInbox(siteId: string) {
+  if (!siteId) {
+    update({ inboxLive: false, inboxError: '', notices: DEFAULT_STORE.notices });
+    return;
+  }
+  if (!store.member.signedIn) {
+    update({ inboxLive: true, inboxError: '', notices: [] });
+    return;
+  }
+  try {
+    const notices = applySeen(await loadMemberInbox(siteId));
+    update({ inboxLive: true, inboxError: '', notices });
+  } catch (reason) {
+    const message = reason instanceof Error ? reason.message : '读取消息失败';
+    update({ inboxLive: true, inboxError: message, notices: [] });
+  }
+}
+
 export function markNotice(id: string) {
+  rememberSeen(id);
+  const item = store.notices.find((notice) => notice.id === id);
   update({
-    notices: store.notices.map((item) => (item.id === id ? { ...item, read: true } : item))
+    notices: store.notices.map((notice) => (notice.id === id ? { ...notice, read: true } : notice))
+  });
+  if (!store.inboxLive || item?.kind !== 'message') return;
+  const ids = (item.mails ?? []).map((line) => line.id).filter((lineId) => /^[0-9a-f-]{36}$/i.test(lineId));
+  const siteId = siteIdFromLocation();
+  if (siteId && ids.length) void markMemberInboxRead(siteId, ids).catch(() => undefined);
+}
+
+function appendMail(id: string, body: string) {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const time = `${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  update({
+    notices: store.notices.map((item) => (
+      item.id === id
+        ? { ...item, read: true, title: body, mails: [...(item.mails ?? []), { id: `m-${now.getTime()}`, body, time, mine: true }] }
+        : item
+    ))
   });
 }
 
 export function signOut() {
   sessionStorage.removeItem(RETURN_KEY);
+  const live = Boolean(siteIdFromLocation());
   update({
     member: { name: '', username: '', groups: [], groupCodes: [], signedIn: false },
     favorites: [],
     history: [],
-    libraryUnavailable: false
+    libraryUnavailable: false,
+    notices: live ? [] : DEFAULT_STORE.notices,
+    inboxLive: live,
+    inboxError: ''
   });
   frontendLogout();
 }
@@ -214,7 +406,10 @@ export async function refreshMember(): Promise<boolean> {
           member: { name: '', username: '', groups: [], groupCodes: [], signedIn: false },
           favorites: [],
           history: [],
-          libraryUnavailable: false
+          libraryUnavailable: false,
+          notices: siteIdFromLocation() ? [] : DEFAULT_STORE.notices,
+          inboxLive: Boolean(siteIdFromLocation()),
+          inboxError: ''
         });
       }
       return false;
@@ -246,6 +441,7 @@ export function MemberShell(props: { go: (id: string) => void; toast: (message: 
   goRef.current = props.go;
   useEffect(() => {
     void refreshMember().then(async (ok) => {
+      await syncInbox(siteIdFromLocation());
       if (!ok) {
         const page = location.hash.replace(/^#/, '').split('/')[0];
         if (page && page !== 'login' && page !== 'register' && page !== 'library' && page !== 'detail') {
@@ -259,21 +455,50 @@ export function MemberShell(props: { go: (id: string) => void; toast: (message: 
   return <ShellContext.Provider value={{ go: props.go, toast: props.toast }}>{props.children}</ShellContext.Provider>;
 }
 
+function NoteBell(props: { notices: Notice[]; unread: number; onOpen: (kind: NoticeKind) => void }) {
+  return (
+    <div className="note-wrap">
+      <button className="icon-btn note-btn" type="button" title="消息通知" aria-label="消息通知" aria-haspopup="menu" onClick={() => props.onOpen('message')}>
+        <BellIcon />
+        {props.unread > 0 ? <span className="note-badge">{unreadText(props.unread)}</span> : null}
+      </button>
+      <div className="note-pop" role="menu" aria-label="消息通知">
+        <div className="note-pop-panel">
+          {NOTICE_TABS.map((tab) => {
+            const count = unreadCount(props.notices, tab.id);
+            return (
+              <button key={tab.id} type="button" role="menuitem" onClick={() => props.onOpen(tab.id)}>
+                <span>{tab.label}</span>
+                {count > 0 ? <em className="note-pill">{unreadText(count)}</em> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AccountBar() {
   const shell = useContext(ShellContext);
   const { member, notices } = useMemberStore();
-  const [open, setOpen] = useState<'menu' | 'notes' | null>(null);
-  const unread = notices.filter((item) => !item.read).length;
+  const [open, setOpen] = useState(false);
+  const unread = unreadCount(notices);
+
+  function openInbox(kind: NoticeKind) {
+    setOpen(false);
+    shell.go(`inbox/${kind}`);
+  }
 
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Node && document.querySelector('.account-bar')?.contains(target)) return;
-      setOpen(null);
+      setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(null);
+      if (event.key === 'Escape') setOpen(false);
     };
     document.addEventListener('pointerdown', close);
     document.addEventListener('keydown', onKey);
@@ -284,7 +509,7 @@ export function AccountBar() {
   }, [open]);
 
   function choose(id: MemberNav | 'library') {
-    setOpen(null);
+    setOpen(false);
     if (id === 'library') {
       signOut();
       shell.toast('已退出');
@@ -295,7 +520,7 @@ export function AccountBar() {
   }
 
   function openLogin() {
-    setOpen(null);
+    setOpen(false);
     const current = location.hash.replace(/^#/, '');
     if (current && current !== 'login') rememberReturn(current);
     shell.go('login');
@@ -306,10 +531,7 @@ export function AccountBar() {
   if (!member.signedIn) {
     return (
       <div className="account-bar">
-        <button className="icon-btn note-btn" type="button" title="消息通知" aria-label="消息通知" onClick={openLogin}>
-          <BellIcon />
-          {unread > 0 ? <span className="note-badge">{unread}</span> : null}
-        </button>
+        <NoteBell notices={notices} unread={unread} onOpen={openInbox} />
         <button className="btn btn-primary btn-sm" type="button" onClick={openLogin}>登录</button>
       </div>
     );
@@ -317,39 +539,18 @@ export function AccountBar() {
 
   return (
     <div className="account-bar">
-      <button
-        className="icon-btn note-btn"
-        type="button"
-        title="消息通知"
-        aria-label="消息通知"
-        aria-expanded={open === 'notes'}
-        onClick={() => setOpen((current) => (current === 'notes' ? null : 'notes'))}
-      >
-        <BellIcon />
-        {unread > 0 ? <span className="note-badge">{unread}</span> : null}
-      </button>
+      <NoteBell notices={notices} unread={unread} onOpen={openInbox} />
       <button
         className="avatar avatar-btn"
         type="button"
         title={member.name || member.username}
         aria-label="会员菜单"
-        aria-expanded={open === 'menu'}
-        onClick={() => setOpen((current) => (current === 'menu' ? null : 'menu'))}
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
       >
         {initial}
       </button>
-      {open === 'notes' ? (
-        <div className="menu-pop note-pop" role="menu" aria-label="消息通知">
-          <div className="menu-user">消息通知</div>
-          {notices.map((item) => (
-            <button key={item.id} type="button" className={item.read ? '' : 'is-unread'} onClick={() => markNotice(item.id)}>
-              <strong>{item.title}</strong>
-              <span>{item.time}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {open === 'menu' ? (
+      {open ? (
         <div className="menu-pop" role="menu" aria-label="会员菜单">
           <div className="menu-user">
             <strong>{member.name || member.username}</strong>
@@ -368,7 +569,7 @@ export function AccountBar() {
   );
 }
 
-export function MemberPage(props: { mode: MemberNav; catalog: Catalog; siteId: string; onOpen: (id: string) => void }) {
+export function MemberPage(props: { mode: MemberNav; catalog: Catalog; siteId: string; inbox?: NoticeKind; onOpen: (id: string) => void }) {
   const shell = useContext(ShellContext);
   const { member, favorites, history, libraryUnavailable } = useMemberStore();
   const [shareLogs, setShareLogs] = useState(false);
@@ -382,6 +583,7 @@ export function MemberPage(props: { mode: MemberNav; catalog: Catalog; siteId: s
     shares: '我的分享',
     favorites: '我的收藏',
     history: '浏览历史',
+    inbox: '消息中心',
     login: '登录',
     register: '注册'
   }[props.mode];
@@ -470,6 +672,12 @@ export function MemberPage(props: { mode: MemberNav; catalog: Catalog; siteId: s
               assets={favorites.map((id) => props.catalog.assets.find((asset) => asset.id === id)).filter((asset): asset is Asset => Boolean(asset))}
               empty="还没有收藏。在资源库卡片上点星标即可加入。"
               onOpen={props.onOpen}
+              removeLabel="取消收藏"
+              onRemove={(id) => {
+                void toggleFavorite(props.siteId, id)
+                  .then(() => shell.toast('已取消收藏'))
+                  .catch((reason: unknown) => shell.toast(reason instanceof Error ? reason.message : '取消收藏失败'));
+              }}
             />
           )
         ) : null}
@@ -483,8 +691,234 @@ export function MemberPage(props: { mode: MemberNav; catalog: Catalog; siteId: s
             />
           )
         ) : null}
+        {props.mode === 'inbox' ? (
+          <Inbox kind={props.inbox || 'message'} onKind={(kind) => shell.go(`inbox/${kind}`)} />
+        ) : null}
       </div>
     </Page>
+  );
+}
+
+function PersonFace(props: { name: string; hue: string }) {
+  return <span className="person-face" style={{ background: props.hue }}>{props.name.slice(0, 1) || '会'}</span>;
+}
+
+function Inbox(props: { kind: NoticeKind; onKind: (kind: NoticeKind) => void }) {
+  const { notices, inboxError, inboxLive } = useMemberStore();
+  const rows = notices.filter((item) => item.kind === props.kind);
+  const current = NOTICE_TABS.find((tab) => tab.id === props.kind) || NOTICE_TABS[0];
+  return (
+    <div className="card inbox">
+      <div className="tabs" role="tablist" aria-label="消息中心">
+        {NOTICE_TABS.map((tab) => {
+          const count = unreadCount(notices, tab.id);
+          return (
+            <button
+              key={tab.id}
+              className={`tab ${tab.id === props.kind ? 'active' : ''}`}
+              type="button"
+              role="tab"
+              aria-selected={tab.id === props.kind}
+              onClick={() => props.onKind(tab.id)}
+            >
+              {tab.label}
+              {count > 0 ? <span className="tab-count">{unreadText(count)}</span> : null}
+            </button>
+          );
+        })}
+      </div>
+      {props.kind === 'fan' ? <p className="inbox-empty">粉丝功能暂未开放</p> : null}
+      {props.kind !== 'fan' && rows.length === 0 ? <p className="inbox-empty">{inboxError || current.empty}</p> : null}
+      {props.kind === 'comment' && rows.length > 0 ? <CommentFeed rows={rows} live={inboxLive} /> : null}
+      {props.kind === 'like' && rows.length > 0 ? <LikeFeed rows={rows} /> : null}
+      {props.kind === 'message' && rows.length > 0 ? <MailDesk rows={rows} live={inboxLive} /> : null}
+    </div>
+  );
+}
+
+function CommentFeed(props: { rows: Notice[]; live: boolean }) {
+  const [liked, setLiked] = useState<Record<string, boolean>>({});
+  const [replyFor, setReplyFor] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const [sent, setSent] = useState<Record<string, string>>({});
+  const [replyError, setReplyError] = useState('');
+  return (
+    <div className="feed">
+      {props.rows.map((item) => (
+        <article key={item.id} className={`feed-item ${item.read ? '' : 'is-unread'}`}>
+          <PersonFace name={item.actor} hue={item.hue} />
+          <div className="feed-main">
+            <p className="feed-title"><strong>{item.actor}</strong> {item.action}</p>
+            {item.body ? <p className="feed-body">{item.body}</p> : null}
+            {item.quote ? <blockquote className="feed-quote">{item.quote}</blockquote> : null}
+            {sent[item.id] ? <p className="feed-sent">我：{sent[item.id]}</p> : null}
+            {replyError && replyFor === item.id ? <p className="feed-sent">{replyError}</p> : null}
+            {replyFor === item.id ? (
+              <form
+                className="feed-reply"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const text = draft.trim();
+                  if (!text) return;
+                  const siteId = siteIdFromLocation();
+                  if (props.live && item.messageId && siteId) {
+                    void replyMemberComment(siteId, item.messageId, text)
+                      .then(() => {
+                        setSent((current) => ({ ...current, [item.id]: text }));
+                        setDraft('');
+                        setReplyFor(null);
+                        setReplyError('');
+                        markNotice(item.id);
+                      })
+                      .catch((reason: unknown) => setReplyError(reason instanceof Error ? reason.message : '回复失败'));
+                    return;
+                  }
+                  setSent((current) => ({ ...current, [item.id]: text }));
+                  setDraft('');
+                  setReplyFor(null);
+                  markNotice(item.id);
+                }}
+              >
+                <input value={draft} placeholder="回复这条评论" onChange={(event) => setDraft(event.target.value)} />
+                <button className="btn btn-primary btn-sm" type="submit">发送</button>
+              </form>
+            ) : null}
+            <div className="feed-meta">
+              <time>{item.time}</time>
+              <div className="feed-actions">
+                <button type="button" onClick={() => { setReplyFor(item.id); setDraft(''); }}>回复</button>
+                <button
+                  type="button"
+                  className={liked[item.id] ? 'is-on' : ''}
+                  onClick={() => {
+                    const siteId = siteIdFromLocation();
+                    if (props.live && item.messageId && siteId && !liked[item.id]) {
+                      void likeMemberComment(siteId, item.messageId)
+                        .then(() => {
+                          setLiked((current) => ({ ...current, [item.id]: true }));
+                          markNotice(item.id);
+                        })
+                        .catch((reason: unknown) => setReplyError(reason instanceof Error ? reason.message : '点赞失败'));
+                      return;
+                    }
+                    setLiked((current) => ({ ...current, [item.id]: !current[item.id] }));
+                    markNotice(item.id);
+                  }}
+                >
+                  {liked[item.id] ? '已赞' : '赞'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function LikeFeed(props: { rows: Notice[] }) {
+  return (
+    <div className="feed">
+      {props.rows.map((item) => (
+        <article key={item.id} className={`feed-item ${item.read ? '' : 'is-unread'}`} onClick={() => markNotice(item.id)}>
+          <PersonFace name={item.actor} hue={item.hue} />
+          <div className="feed-main">
+            <p className="feed-title"><strong>{item.actor}</strong> {item.action}</p>
+            {item.quote ? <blockquote className="feed-quote">{item.quote}</blockquote> : null}
+            <time className="feed-time">{item.time}</time>
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function FanGrid(props: { rows: Notice[] }) {
+  return (
+    <div className="fan-wrap">
+      <div className="fan-grid">
+        {props.rows.map((item) => (
+          <button key={item.id} type="button" className={`fan-card ${item.read ? '' : 'is-unread'}`} onClick={() => markNotice(item.id)}>
+            <PersonFace name={item.actor} hue={item.hue} />
+            <span>
+              <strong>{item.actor}</strong>
+              <time>{item.time}</time>
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="inbox-end">没有更多了</p>
+    </div>
+  );
+}
+
+function MailDesk(props: { rows: Notice[]; live: boolean }) {
+  const [peerId, setPeerId] = useState(props.rows[0]?.id ?? '');
+  const [draft, setDraft] = useState('');
+  const active = props.rows.find((item) => item.id === peerId) ?? props.rows[0];
+  const earlierAt = props.rows.findIndex((item) => item.earlier);
+  return (
+    <div className="mail-desk">
+      <div className="mail-peers" role="listbox" aria-label="发信人">
+        {props.rows.map((item, index) => (
+          <div key={item.id}>
+            {earlierAt === index ? <p className="mail-split">更早的消息</p> : null}
+            <button
+              type="button"
+              role="option"
+              aria-selected={item.id === active?.id}
+              className={`mail-peer ${item.id === active?.id ? 'is-on' : ''} ${item.read ? '' : 'is-unread'}`}
+              onClick={() => {
+                setPeerId(item.id);
+                setDraft('');
+                markNotice(item.id);
+              }}
+            >
+              <PersonFace name={item.actor} hue={item.hue} />
+              <span className="mail-peer-main">
+                <span className="mail-peer-top">
+                  <strong>{item.actor}</strong>
+                  {item.official ? <em>官方</em> : null}
+                  <time>{item.time}</time>
+                </span>
+                <span className="mail-peer-preview">{item.title}</span>
+              </span>
+            </button>
+          </div>
+        ))}
+      </div>
+      {active ? (
+        <section className="mail-thread" aria-label={active.actor}>
+          <header className="mail-thread-head">
+            <strong>{active.actor}</strong>
+            {active.official ? <em>官方</em> : null}
+          </header>
+          <div className="mail-thread-body">
+            {(active.mails ?? []).map((line) => (
+              <div key={line.id} className={`mail-bubble ${line.mine ? 'is-mine' : ''}`}>
+                <p>{line.body}</p>
+                <time>{line.time}</time>
+              </div>
+            ))}
+          </div>
+          {props.live ? null : (
+            <form
+              className="mail-compose"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const text = draft.trim();
+                if (!text) return;
+                appendMail(active.id, text);
+                setDraft('');
+              }}
+            >
+              <input value={draft} placeholder={`回复 ${active.actor}`} onChange={(event) => setDraft(event.target.value)} />
+              <button className="btn btn-primary btn-sm" type="submit">发送</button>
+            </form>
+          )}
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -523,10 +957,12 @@ function LibraryMissing() {
 }
 
 function UploadList(props: { siteId: string; catalog: Catalog; signedIn: boolean; onOpen: (id: string) => void }) {
+  const shell = useContext(ShellContext);
   const [rows, setRows] = useState<MemberUpload[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState<{ id: string; title: string } | null>(null);
+  const [deleting, setDeleting] = useState('');
 
   useEffect(() => {
     if (!props.signedIn || !props.siteId) {
@@ -554,6 +990,19 @@ function UploadList(props: { siteId: string; catalog: Catalog; signedIn: boolean
     };
   }, [props.siteId, props.signedIn]);
 
+  function remove(id: string, title: string) {
+    if (deleting) return;
+    if (!window.confirm(`确定删除「${title || '未命名资源'}」？删除后不可恢复。`)) return;
+    setDeleting(id);
+    void deleteMemberUpload(props.siteId, id)
+      .then(() => {
+        setRows((current) => current.filter((row) => row.id !== id));
+        shell.toast('已删除');
+      })
+      .catch((reason: unknown) => shell.toast(reason instanceof Error ? reason.message : '删除失败'))
+      .finally(() => setDeleting(''));
+  }
+
   if (!props.signedIn) return <div className="card card-pad"><p>登录后可以查看自己创建的资源。</p></div>;
   if (loading) return <div className="card card-pad"><p>正在读取上传记录…</p></div>;
   if (error) return <div className="state-card"><span className="state-title">暂时无法读取</span><span className="state-desc">{error}</span></div>;
@@ -573,6 +1022,14 @@ function UploadList(props: { siteId: string; catalog: Catalog; signedIn: boolean
               <span className="row-sub">{kindLabel(asset.kind)} · {formatBytes(asset.bytes)} · {formatWhen(asset.updatedAt)}</span>
             </button>
             <button className="btn btn-ghost btn-sm" type="button" onClick={() => setSharing({ id: asset.id, title: asset.title })}>分享</button>
+            <button
+              className="btn btn-ghost btn-sm"
+              type="button"
+              disabled={deleting === asset.id}
+              onClick={() => remove(asset.id, asset.title)}
+            >
+              {deleting === asset.id ? '删除中…' : '删除'}
+            </button>
           </div>
         ))}
         {missing.map((row) => (
@@ -584,6 +1041,14 @@ function UploadList(props: { siteId: string; catalog: Catalog; signedIn: boolean
             {row.status === 'PUBLISHED' ? (
               <button className="btn btn-ghost btn-sm" type="button" onClick={() => setSharing({ id: row.id, title: row.title || '未命名资源' })}>分享</button>
             ) : null}
+            <button
+              className="btn btn-ghost btn-sm"
+              type="button"
+              disabled={deleting === row.id}
+              onClick={() => remove(row.id, row.title)}
+            >
+              {deleting === row.id ? '删除中…' : '删除'}
+            </button>
           </div>
         ))}
       </div>
@@ -820,6 +1285,7 @@ function LoginForm(props: { siteId: string }) {
           .then(async () => {
             const synced = await refreshMember();
             if (!synced) signIn(account.trim());
+            await syncInbox(props.siteId);
             await syncLibrary(props.siteId);
             shell.toast('已登录');
             shell.go(consumeReturn());
@@ -920,6 +1386,7 @@ function RegisterForm(props: { siteId: string }) {
               await frontendLogin(props.siteId, username.trim(), password);
               const synced = await refreshMember();
               if (!synced) signIn(result.displayName || username.trim());
+              await syncInbox(props.siteId);
               await syncLibrary(props.siteId);
               shell.toast('已登录');
               shell.go(consumeReturn());
@@ -987,22 +1454,27 @@ function BellIcon() {
   );
 }
 
-function AssetList(props: { assets: Asset[]; empty: string; onOpen: (id: string) => void; when?: Map<string, string> }) {
+function AssetList(props: { assets: Asset[]; empty: string; onOpen: (id: string) => void; when?: Map<string, string>; onRemove?: (id: string) => void; removeLabel?: string }) {
   if (props.assets.length === 0) {
     return <div className="state-card"><span className="state-title">这里还是空的</span><span className="state-desc">{props.empty}</span></div>;
   }
   return (
     <div className="card">
       {props.assets.map((asset) => (
-        <button key={asset.id} className="row" type="button" onClick={() => props.onOpen(asset.id)} style={{ width: '100%', textAlign: 'left' }}>
-          <div className="row-col">
+        <div key={asset.id} className="row">
+          <button className="row-col" type="button" onClick={() => props.onOpen(asset.id)} style={{ textAlign: 'left', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}>
             <span className="row-title">{asset.title}</span>
             <span className="row-sub">
               {kindLabel(asset.kind)} · {formatBytes(asset.bytes)}
               {props.when?.get(asset.id) ? ` · ${formatWhen(props.when.get(asset.id) || '')}` : ''}
             </span>
-          </div>
-        </button>
+          </button>
+          {props.onRemove ? (
+            <button className="btn btn-ghost btn-sm" type="button" onClick={() => props.onRemove?.(asset.id)}>
+              {props.removeLabel || '移除'}
+            </button>
+          ) : null}
+        </div>
       ))}
     </div>
   );
