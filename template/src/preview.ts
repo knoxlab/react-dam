@@ -79,10 +79,28 @@ export async function loadKnoxPlayUrl(siteId: string, assetId: string): Promise<
     `/api/v1/delivery/sites/${encodeURIComponent(siteId)}/media/${encodeURIComponent(assetId)}/play-token`,
     { method: 'POST', headers: { Accept: 'application/json' }, credentials: 'include' }
   );
-  if (!response.ok) throw new Error('图片暂时无法从 Knox-Media 加载');
+  if (!response.ok) {
+    let detail = '';
+    try {
+      const body = await response.json() as { message?: string };
+      detail = body.message?.trim() || '';
+    } catch {
+      /* 非 JSON 错误页 */
+    }
+    throw new Error(detail || (response.status === 404 ? '原件不存在或尚未就绪' : '原件暂时无法从 Knox-Media 加载'));
+  }
   const data = await response.json() as { playUrl?: string; width?: number; height?: number };
-  if (!data.playUrl) throw new Error('图片暂时无法从 Knox-Media 加载');
+  if (!data.playUrl) throw new Error('原件暂时无法从 Knox-Media 加载');
   return { playUrl: data.playUrl, width: data.width ?? 0, height: data.height ?? 0 };
+}
+
+/**
+ * Knox-Media 播放代理页地址（GET /media-play/{siteId}/{assetId}）。
+ * 该页由服务端渲染，内嵌 Knox PowerPlayer，加载时自行向 play-token 换取可播地址，
+ * 与后端媒体库「播放代码」的 iframe 形态一致；HLS 也由 PowerPlayer 解码。
+ */
+export function knoxPlayerUrl(siteId: string, assetId: string): string {
+  return `/media-play/${encodeURIComponent(siteId)}/${encodeURIComponent(assetId)}`;
 }
 
 export function addressLabel(src: string): string {

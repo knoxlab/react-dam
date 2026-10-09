@@ -697,6 +697,28 @@ export async function deleteMemberUpload(siteId: string, contentId: string) {
   await requireMemberOk(res);
 }
 
+/** 把上传队列中已完成的原件登记为 digital_asset 并自动提交审核（状态 IN_REVIEW、审批状态 pending）。 */
+export async function createMemberUpload(
+  siteId: string,
+  folderId: string,
+  title: string,
+  fields: Record<string, string>
+): Promise<MemberUpload> {
+  const res = await memberLibrary(siteId, '/uploads/contents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folderId, title, fields })
+  });
+  await requireMemberOk(res);
+  const row = await res.json() as { id?: string; title?: string; status?: string; updatedAt?: string };
+  return {
+    id: row.id ?? '',
+    title: row.title ?? title,
+    status: row.status ?? 'DRAFT',
+    updatedAt: row.updatedAt ?? ''
+  };
+}
+
 export async function loadMemberFavorites(siteId: string): Promise<MemberMark[]> {
   const res = await memberLibrary(siteId, '/favorites');
   await requireMemberOk(res);

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'rea
 import type { Asset } from '../types';
 import {
   frameOf,
+  knoxPlayerUrl,
   loadKnoxPlayUrl,
   mediaAssetId,
   pdfFrame,
@@ -23,6 +24,7 @@ export function PreviewPane(props: {
 }) {
   const kind = previewKind(props.asset.kind);
   const [src, setSrc] = useState(() => initialSrc(props.asset));
+  const [loadError, setLoadError] = useState('');
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null);
   const onMeasureRef = useRef(props.onMeasure);
@@ -41,25 +43,36 @@ export function PreviewPane(props: {
     const assetId = target.assetId
       || (kind === 'image' ? (props.imageAssetIds?.[0] || mediaAssetId(props.asset.thumbnail)) : '');
     if (target.url) {
+      setLoadError('');
       setSrc(target.url);
       return;
     }
     if (!assetId || !props.siteId) {
+      setLoadError('');
       setSrc('');
       return;
     }
     let cancelled = false;
     setSrc('');
+    setLoadError('');
+    setPlayback('loading');
     loadKnoxPlayUrl(props.siteId, assetId)
       .then((data) => {
         if (cancelled) return;
-        setSrc(data.playUrl);
+        // 视频改嵌 Knox-Media 播放代理页（/media-play）：播放器与播放链接都来自 Knox-Media，
+        // 与后端媒体库预览一致，HLS 也由 PowerPlayer 解码；其余类型仍用短时可播地址取字节。
+        setSrc(kind === 'video' ? knoxPlayerUrl(props.siteId, assetId) : data.playUrl);
         if (data.width > 0 && data.height > 0) {
           setBox({ w: data.width, h: data.height });
           onMeasureRef.current(data.width, data.height);
         }
       })
-      .catch(() => undefined);
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        setSrc('');
+        setLoadError(reason instanceof Error ? reason.message : '原件暂时无法播放');
+        setPlayback('ready');
+      });
     return () => {
       cancelled = true;
     };
@@ -130,6 +143,8 @@ export function PreviewPane(props: {
         <PreviewBody
           kind={kind}
           src={src}
+          embed={kind === 'video' && src.startsWith('/media-play/')}
+          loadError={loadError}
           asset={props.asset}
           playing={playback === 'playing' || playback === 'muted'}
           mediaRef={mediaRef}
@@ -159,6 +174,8 @@ export function PreviewPane(props: {
 function PreviewBody(props: {
   kind: PreviewKind;
   src: string;
+  embed?: boolean;
+  loadError?: string;
   asset: Asset;
   playing: boolean;
   mediaRef: RefObject<HTMLVideoElement | HTMLAudioElement | null>;
@@ -169,7 +186,10 @@ function PreviewBody(props: {
   onMeasure: (width: number, height: number) => void;
 }) {
   if (!props.src && props.kind !== 'text') {
-    return <div className="preview-paper"><p>{props.asset.storageUri ? `原件通过媒体引用保存，不在前台直接打开：${props.asset.storageUri}` : (props.asset.summary || '这条资源还没有媒体引用')}</p></div>;
+    const hasRef = Boolean(mediaAssetId(props.asset.storageUri) || props.asset.storageUri.trim());
+    const message = props.loadError
+      || (hasRef ? '原件暂时无法播放，请稍后刷新重试' : (props.asset.summary || '这条资源还没有可播放的原件'));
+    return <div className="preview-paper"><p>{message}</p></div>;
   }
   if (props.kind === 'image') {
     return (
@@ -185,6 +205,21 @@ function PreviewBody(props: {
     );
   }
   if (props.kind === 'video') {
+    // 内嵌 Knox-Media 播放代理页：播放器（PowerPlayer）与可播地址都由 Knox-Media 侧提供，
+    // 与后端媒体库预览同源同款，HLS 由 PowerPlayer 解码，不再由 <video> 直接取流。
+    if (props.embed) {
+      return (
+        <iframe
+          key={props.asset.id}
+          className="fit"
+          title={props.asset.title}
+          src={props.src}
+          allow="autoplay; fullscreen"
+          allowFullScreen
+          onLoad={props.onReady}
+        />
+      );
+    }
     return (
       <video
         key={props.asset.id}

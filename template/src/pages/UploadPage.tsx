@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccountBar } from '../account';
 import {
+  createMemberUpload,
   loadContentForm,
   uploadMemberFile,
   type ContentForm,
@@ -39,6 +40,8 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
   const [values, setValues] = useState<Record<string, Record<string, string>>>({});
   const [activeVideo, setActiveVideo] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
   const allowed = props.folders.some((folder) => folder.id === folderId) ? folderId : '';
   const folder = props.folders.find((item) => item.id === allowed);
   const done = useMemo(() => items.filter((item) => item.status === 'done'), [items]);
@@ -191,7 +194,147 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
     }));
   }
 
+  function cancelForm() {
+    if (submitting) return;
+    setShowForm(false);
+    setSubmitError('');
+  }
+
+  function validateForm(): string {
+    if (!form) return formError || '数字资源表单布局尚未就绪';
+    for (const item of done) {
+      const row = values[item.id] ?? {};
+      for (const field of fields) {
+        if (!field.required || field.fieldType === 'BOOLEAN') continue;
+        if (!(row[field.code] ?? '').trim()) {
+          return `请填写「${item.name}」的${field.name}`;
+        }
+      }
+    }
+    return '';
+  }
+
+  async function submitForm() {
+    if (submitting || !props.siteId) return;
+    const problem = validateForm();
+    if (problem) {
+      setSubmitError(problem);
+      props.onToast(problem);
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError('');
+    const createdIds: string[] = [];
+    try {
+      for (const item of done) {
+        const row = values[item.id] ?? {};
+        const title = (row.asset_code_s || item.name.replace(/\.[^.]+$/, '') || item.name).trim();
+        await createMemberUpload(props.siteId, item.folderId, title, row);
+        createdIds.push(item.id);
+      }
+      for (const id of createdIds) dropped.current.add(id);
+      setItems((current) => current.filter((item) => !createdIds.includes(item.id)));
+      setValues((current) => {
+        const next = { ...current };
+        for (const id of createdIds) delete next[id];
+        return next;
+      });
+      setShowForm(false);
+      props.onToast(createdIds.length === 1 ? '已提交审核，可在「我的上传」查看' : `已提交 ${createdIds.length} 条资源进入审核`);
+    } catch (reason: unknown) {
+      setSubmitError(reason instanceof Error ? reason.message : '提交失败');
+      props.onToast(reason instanceof Error ? reason.message : '提交失败');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   const active = videos.find((item) => item.id === activeVideo) ?? videos[0];
+
+  if (showForm && done.length > 0) {
+    return (
+      <Page>
+        <header className="topbar">
+          <div className="topbar-left"><span className="crumb">资源管理&nbsp;&nbsp;/&nbsp;&nbsp;上传中心&nbsp;&nbsp;/&nbsp;&nbsp;填写资料</span></div>
+          <div className="topbar-right">
+            <button className="btn btn-ghost" type="button" disabled={submitting} onClick={cancelForm}>取消</button>
+            <button className="btn btn-primary" type="button" disabled={submitting || !form} onClick={() => void submitForm()}>
+              {submitting ? '提交中…' : '提交'}
+            </button>
+            <AccountBar />
+          </div>
+        </header>
+        <div className="page-body">
+          <div className="page-head">
+            <h1 className="page-title">{form?.name || '填写数字资源'}</h1>
+            <p className="page-sub">
+              共 {done.length} 个已上传文件 · 提交后自动提交审核（可在「我的上传」查看进度）
+              {folder ? ` · 栏目「${folder.title}」` : ''}
+            </p>
+          </div>
+          <div className="card">
+            {videos.length > 1 ? (
+              <div className="tabs file-tabs" role="tablist" aria-label="视频">
+                {videos.map((item) => (
+                  <button
+                    key={item.id}
+                    className={`tab ${item.id === active?.id ? 'active' : ''}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={item.id === active?.id}
+                    title={item.name}
+                    onClick={() => setActiveVideo(item.id)}
+                  >
+                    <span>{item.name}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {formError ? <div className="card-note">{formError}</div> : null}
+            {submitError ? <div className="card-note" style={{ color: 'var(--danger-text)' }}>{submitError}</div> : null}
+            {!form && !formError ? <div className="card-note">正在读取数字资源表单…</div> : null}
+            {form && videos.length > 1 && active ? (
+              <AssetForm
+                item={active}
+                siteId={props.siteId}
+                nodes={form.nodes}
+                values={values[active.id] ?? {}}
+                onChange={(code, value) => changeValue(active.id, code, value)}
+              />
+            ) : null}
+            {form && videos.length <= 1 ? done.map((item) => (
+              <AssetForm
+                key={item.id}
+                item={item}
+                siteId={props.siteId}
+                nodes={form.nodes}
+                values={values[item.id] ?? {}}
+                showName={done.length > 1}
+                onChange={(code, value) => changeValue(item.id, code, value)}
+              />
+            )) : null}
+            {form && videos.length > 1 ? others.map((item) => (
+              <AssetForm
+                key={item.id}
+                item={item}
+                siteId={props.siteId}
+                nodes={form.nodes}
+                values={values[item.id] ?? {}}
+                showName
+                onChange={(code, value) => changeValue(item.id, code, value)}
+              />
+            )) : null}
+            <div className="form-actions">
+              <button className="btn btn-ghost" type="button" disabled={submitting} onClick={cancelForm}>取消</button>
+              <button className="btn btn-primary" type="button" disabled={submitting || !form} onClick={() => void submitForm()}>
+                {submitting ? '提交中…' : '提交'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Page>
+    );
+  }
 
   return (
     <Page>
@@ -308,70 +451,12 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
               <button className="btn btn-ghost btn-sm" type="button" onClick={() => removeItem(item.id)}>删除</button>
             </div>
           ))}
-          {done.length > 0 && !showForm ? (
+          {done.length > 0 ? (
             <div className="card-pad" style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-primary" type="button" onClick={() => setShowForm(true)}>下一步</button>
+              <button className="btn btn-primary" type="button" onClick={() => { setSubmitError(''); setShowForm(true); }}>下一步</button>
             </div>
           ) : null}
         </div>
-
-        {showForm && done.length > 0 ? (
-          <div className="card">
-            <div className="card-head">
-              <span className="card-title">{form?.name || '数字资源'}</span>
-            </div>
-            {videos.length > 1 ? (
-              <div className="tabs file-tabs" role="tablist" aria-label="视频">
-                {videos.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`tab ${item.id === active?.id ? 'active' : ''}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={item.id === active?.id}
-                    title={item.name}
-                    onClick={() => setActiveVideo(item.id)}
-                  >
-                    <span>{item.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {formError ? <div className="card-note">{formError}</div> : null}
-            {!form && !formError ? <div className="card-note">正在读取数字资源表单…</div> : null}
-            {form && videos.length > 1 && active ? (
-              <AssetForm
-                item={active}
-                siteId={props.siteId}
-                nodes={form.nodes}
-                values={values[active.id] ?? {}}
-                onChange={(code, value) => changeValue(active.id, code, value)}
-              />
-            ) : null}
-            {form && videos.length <= 1 ? done.map((item) => (
-              <AssetForm
-                key={item.id}
-                item={item}
-                siteId={props.siteId}
-                nodes={form.nodes}
-                values={values[item.id] ?? {}}
-                showName={done.length > 1}
-                onChange={(code, value) => changeValue(item.id, code, value)}
-              />
-            )) : null}
-            {form && videos.length > 1 ? others.map((item) => (
-              <AssetForm
-                key={item.id}
-                item={item}
-                siteId={props.siteId}
-                nodes={form.nodes}
-                values={values[item.id] ?? {}}
-                showName
-                onChange={(code, value) => changeValue(item.id, code, value)}
-              />
-            )) : null}
-          </div>
-        ) : null}
       </div>
     </Page>
   );
@@ -687,6 +772,7 @@ function initialValues(fields: ContentFormField[], item: QueueItem, folderTitle:
     if (field.code === 'asset_kind_s') value = item.kind;
     if (field.code === 'resource_group_s' && folderTitle) value = folderTitle;
     if (field.code === 'asset_code_s' && !value) value = item.name.replace(/\.[^.]+$/, '') || item.name;
+    if (field.code === 'approval_status_s') value = 'pending';
     if (field.fieldType === 'MEDIA_REF' && !value) value = item.assetId;
     values[field.code] = value;
   }
