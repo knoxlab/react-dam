@@ -2,6 +2,15 @@
 
 PowerCMS 12 站点包。导入后得到一个站点、四套内容模型和一套 React 前台，用来统一管理图片、音视频、文档、PDF 和文本片段。
 
+## 站点导入即部署（webapps）
+
+站点包导入时，模板工程（REACT/VUE）的构建产物会自动部署到**当前运行目录**下的 `webapps/{siteKey}/`，浏览器可直接访问，例如 `http://localhost:8080/webapps/react-dam/`：
+
+- 产物来源两级：包内 `template/dist/**`（打包前 `npm run build` 的成品）优先进入快路径；包内无产物时按清单 `entrypoints.build` 在导入侧现场构建（`powercms.webapps.build=auto|never|always`，默认 `auto`）。
+- `index.html` 响应由服务端注入启动配置：`window.__POWERCMS_SITE_ID__`（站点 UUID）、`window.__POWERCMS_SITE_KEY__`、`window.__POWERCMS_API_BASE__`（`/api/v1`）——**API 路径自动匹配**：应用无需手工携带 `?siteId=` 或硬编码 API 根，站点 API（`/api/v1/delivery/sites/{siteId}/...`）自动指向本站点。
+- 以应用基路径相对寻址的调用（`/webapps/{siteKey}/api/...`）由服务端透明改写到 `/api/...`，鉴权语义与直接调用一致。
+- Vite 构建配置 `base: './'`，产物可部署在任意子路径下；客户端路由（无扩展名路径）自动回退 `index.html`。
+
 ## 导入
 
 在仓库根目录执行：
