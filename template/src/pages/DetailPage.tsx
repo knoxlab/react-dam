@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { trackEvent, analyticsRoute } from '../analytics';
 import { downloadContentFile, likeMemberComment, loadContentActions, loadContentComments, loadContentForm, recordContentView, submitContentComment, toggleContentLike, type ContentActions, type ContentComment, type ContentFormNode } from '../api';
 import { AccountBar, toggleFavorite, useMemberStore } from '../account';
 import { approvalBadge, approvalLabel, fileExt, formatBytes, formatDate, formatWhen, kindLabel, licenseLabel } from '../format';
@@ -68,6 +69,20 @@ export function DetailPage(props: {
   useEffect(() => {
     if (!props.siteId || !asset?.id) return;
     let cancelled = false;
+    // 统计采集：资源详情页浏览。PAGEVIEW 携带 contentId/mediaAssetId 进入后台统计分析
+    // 的内容排行（pv/uv）、栏目/内容类型统计与最近访问明细；CONTENT_VIEW 作为资源级
+    // 浏览事件一并记录。脚本自动上报只带 pathname，资源维度须在这里手动上报。
+    const mediaId = mediaAssetId(asset.storageUri);
+    trackEvent('PAGEVIEW', {
+      routePath: analyticsRoute(`detail/${encodeURIComponent(asset.id)}`),
+      title: `资源详情 · ${asset.title}`,
+      contentId: asset.id,
+      ...(mediaId ? { mediaAssetId: mediaId } : {})
+    });
+    trackEvent('CONTENT_VIEW', {
+      contentId: asset.id,
+      ...(mediaId ? { mediaAssetId: mediaId } : {})
+    });
     void recordContentView(props.siteId, asset.id).then((count) => {
       if (!cancelled && count != null) setViewCount(count);
     });
@@ -688,10 +703,12 @@ function DetailEngage(props: {
     // 没有站内原件时，编辑器保存的外部地址就是可下载的文件本身。
     if (!props.mediaId && props.external) {
       window.open(props.external, '_blank', 'noopener');
+      trackEvent('DOWNLOAD', { contentId: props.assetId });
       return;
     }
     try {
       await downloadContentFile(props.siteId, props.mediaId);
+      trackEvent('DOWNLOAD', { contentId: props.assetId, mediaAssetId: props.mediaId });
     } catch (reason) {
       fail(reason, '下载失败');
     }

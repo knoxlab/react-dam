@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isSignedIn, MemberPage, MemberShell, folderTree, noticeKind, rememberReturn, rememberView, uploadFolders, useMemberStore, viewFolders, type MemberNav, type NoticeKind } from './account';
+import { analyticsRoute, trackPageView } from './analytics';
 import { loadAnonymousLibrary, loadCatalog, siteIdFromLocation } from './api';
 import { formatBytes } from './format';
 import { AskPage } from './pages/AskPage';
@@ -56,6 +57,28 @@ function returnToken(page: NavId, assetId: string, inbox: NoticeKind = 'message'
   if (page === 'detail' && assetId) return `detail/${encodeURIComponent(assetId)}`;
   if (page === 'inbox') return `inbox/${inbox}`;
   return page;
+}
+
+/** 导航外页面（成员页/登录注册）的统计标题；不在表里的用路由名兜底。 */
+const EXTRA_LABELS: Partial<Record<NavId, string>> = {
+  account: '个人中心',
+  password: '修改密码',
+  uploads: '我的上传',
+  shares: '分享链接',
+  favorites: '收藏夹',
+  history: '浏览历史',
+  inbox: '消息通知',
+  login: '登录',
+  register: '注册'
+};
+
+/** 导航项中文名，用作统计事件的页面标题；成员页等不在导航里的用路由名兜底。 */
+function navLabel(id: NavId) {
+  for (const group of NAV) {
+    const item = group.items.find((entry) => entry.id === id);
+    if (item) return item.label;
+  }
+  return EXTRA_LABELS[id] ?? id;
 }
 
 function applyAddress(siteId: string, hash: string) {
@@ -164,6 +187,19 @@ export function App() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, [accessReady, anonymousLibrary, siteId]);
+
+  // 统计采集：hash 脚本只能按 pathname 去重，SPA 内页浏览在这里按路由上报
+  // （进入后台统计分析的 PV/UV、urls/rank、时段分布等）。资源详情页由 DetailPage
+  // 在资源真正渲染时按资源维度上报（携带 contentId/mediaAssetId），这里跳过避免重复计数；
+  // 同一路由重复生效（如目录加载回填选中项）用 ref 去重，避免首屏重复计数。
+  const lastTrackedRoute = useRef<string | null>(null);
+  useEffect(() => {
+    if (!siteId || nav === 'detail') return;
+    const route = analyticsRoute(returnToken(nav, selectedId || ''));
+    if (lastTrackedRoute.current === route) return;
+    lastTrackedRoute.current = route;
+    trackPageView(route, `数字资产中心 · ${navLabel(nav)}`);
+  }, [siteId, nav, selectedId]);
 
   useEffect(() => {
     if (!toast) return;
