@@ -14,6 +14,7 @@ import {
   type Orientation,
   type PreviewKind
 } from '../preview';
+import { ImageLightbox, type LightboxSlide } from './ImageLightbox';
 import { PdfViewer } from './PdfViewer';
 
 type Playback = 'loading' | 'playing' | 'muted' | 'blocked' | 'ready' | 'paused' | 'ended';
@@ -36,6 +37,8 @@ export function PreviewPane(props: {
   const known = frameOf(props.asset);
   const frame = box ?? ((props.asset.width ?? 0) > 0 && (props.asset.height ?? 0) > 0 ? known : null);
   const [playback, setPlayback] = useState<Playback>(src ? 'loading' : 'ready');
+  // 大图查看层（图片专属）：铺满窗口，带缩放/旋转/拖拽/前后翻图。
+  const [lightbox, setLightbox] = useState(false);
   // 预览顶部工具条状态：这里只管图片。文档的翻页/缩放/大纲/全屏工具条
   // 收在 PdfViewer 自己的壳内（顶部居中），因为全屏元素是壳，工具条必须在里面才会跟着全屏。
   const [zoom, setZoom] = useState(1);
@@ -191,6 +194,11 @@ export function PreviewPane(props: {
   const mediaId = previewTarget(props.asset).assetId;
   const docFallbackSrc = mediaId ? mediaPreviewUrl(props.siteId, mediaId) : '';
 
+  // 大图查看层的可切集合：当前主图在首位，其后是内容模型里的其余图片 ——
+  // 顺序与详情页侧栏「图片」卡片一致，前后翻图时才不会与页面上看到的顺序对不上。
+  const lightboxSlides = kind === 'image' ? imageSlides(props.asset, props.siteId, props.imageAssetIds) : [];
+  const canEnlarge = Boolean(src) && !loadError && lightboxSlides.length > 0;
+
   return (
     <div className="card">
       {hasToolbar ? (
@@ -222,6 +230,12 @@ export function PreviewPane(props: {
             props.onMeasure(width, height);
           }}
         />
+        {canEnlarge ? (
+          <button type="button" className="view-large" title="点击查看大图" onClick={() => setLightbox(true)}>
+            <IconSearch />
+            查看大图
+          </button>
+        ) : null}
       </div>
       <div className="preview-bar">
         <span className="preview-facts">
@@ -232,7 +246,51 @@ export function PreviewPane(props: {
         <span className="grow" />
         {props.extra}
       </div>
+      {lightbox && canEnlarge ? (
+        <ImageLightbox
+          slides={lightboxSlides}
+          alt={props.asset.title}
+          onClose={() => setLightbox(false)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * 大图查看层的图片集合。
+ *
+ * <p>主图取法与上方 `src` 的解析**完全一致**（原件引用 → 内容模型首图 → 预览图字段），
+ * 否则「看到的」与「打开后第一张」会是两张不同的图；外链原件没有媒体资产 id，
+ * 只能作为单独一项放进列表，其后仍接内容模型里的图片。
+ */
+function imageSlides(asset: Asset, siteId: string, imageAssetIds?: string[]): LightboxSlide[] {
+  const target = previewTarget(asset);
+  const mainId = target.assetId || imageAssetIds?.[0] || mediaAssetId(asset.thumbnail) || '';
+  const seen = new Set<string>();
+  const slides: LightboxSlide[] = [];
+  if (target.url) {
+    slides.push({ url: target.url });
+  } else if (mainId && siteId) {
+    slides.push({ url: mediaThumbUrl(siteId, mainId) });
+    seen.add(mainId);
+  }
+  for (const id of imageAssetIds ?? []) {
+    if (!id || !siteId || seen.has(id)) continue;
+    seen.add(id);
+    slides.push({ url: mediaThumbUrl(siteId, id) });
+  }
+  return slides;
+}
+
+/** 「查看大图」按钮上的放大镜 —— 放在 .preview-stage 内，注意那里有 `.preview-stage svg` 全宽规则，需在 CSS 里覆写尺寸。 */
+function IconSearch() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.25" />
+      <path d="M7.6 10.5h5.8M10.5 7.6v5.8" />
+      <path d="M15 15l4.5 4.5" />
+    </svg>
   );
 }
 
