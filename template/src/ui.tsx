@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { AssetKind } from './types';
 
 export function BrandMark() {
@@ -112,10 +112,21 @@ export function Mark({ kind }: { kind: 'ok' | 'no' | 'warn' }) {
   );
 }
 
-export function Thumb({ kind, ext, flag }: { kind: AssetKind; ext: string; flag?: string }) {
+/**
+ * 卡片预览图层：资源有预览图（图片缩略 / 视频海报 / 文档封面，上传时从 knox-media 同步）
+ * 时直接展示预览图；没有预览或预览加载失败时回退类型图标占位。
+ */
+export function Thumb({ kind, ext, flag, src }: { kind: AssetKind; ext: string; flag?: string; src?: string }) {
+  const [broken, setBroken] = useState(false);
+  const preview = (src ?? '').trim();
+  const showPreview = Boolean(preview) && !broken;
   return (
-    <div className={`asset-thumb ${flag ? 'thumb-ai' : thumbName(kind)}`}>
-      <ThumbArt kind={flag ? 'image' : kind} />
+    <div className={`asset-thumb ${showPreview ? 'has-preview' : flag ? 'thumb-ai' : thumbName(kind)}`}>
+      {showPreview ? (
+        <img className="thumb-img" src={preview} alt="" loading="lazy" onError={() => setBroken(true)} />
+      ) : (
+        <ThumbArt kind={flag ? 'image' : kind} />
+      )}
       <span className="thumb-tag">{ext}</span>
       {flag ? <span className="thumb-flag">{flag}</span> : null}
     </div>

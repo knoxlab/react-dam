@@ -5,12 +5,16 @@ import {
   knoxPlayerUrl,
   loadKnoxPlayUrl,
   mediaAssetId,
+  mediaPdfUrl,
+  mediaPreviewUrl,
+  mediaThumbUrl,
   pdfFrame,
   previewKind,
   previewTarget,
   type Orientation,
   type PreviewKind
 } from '../preview';
+import { PdfViewer } from './PdfViewer';
 
 type Playback = 'loading' | 'playing' | 'muted' | 'blocked' | 'ready' | 'paused' | 'ended';
 
@@ -32,10 +36,15 @@ export function PreviewPane(props: {
   const known = frameOf(props.asset);
   const frame = box ?? ((props.asset.width ?? 0) > 0 && (props.asset.height ?? 0) > 0 ? known : null);
   const [playback, setPlayback] = useState<Playback>(src ? 'loading' : 'ready');
+  // 预览顶部工具条状态：这里只管图片。文档的翻页/缩放/大纲/全屏工具条
+  // 收在 PdfViewer 自己的壳内（顶部居中），因为全屏元素是壳，工具条必须在里面才会跟着全屏。
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     setBox(null);
     setPlayback(src ? 'loading' : 'ready');
+    // 换资源时缩放必须归位，否则上一条 200% 放大会留在新资源上。
+    setZoom(1);
   }, [props.asset.id, src]);
 
   useEffect(() => {
@@ -56,12 +65,38 @@ export function PreviewPane(props: {
     setSrc('');
     setLoadError('');
     setPlayback('loading');
+    // 图片走预览代理取图片字节，不经过 play-token：Knox-Media 对图片也可能回
+    // `playerMode=hls` 的 DRM 加密播放列表（m3u8），`<img>` 拿到无法渲染。
+    // /media-thumb 按类型回源（图片缩略/音视频海报截帧/文档封面），且是 permitAll，
+    // 未登录访客同样可用，与列表卡片的 `assetPreviewSrc` 同源同款。
+    if (kind === 'image') {
+      setSrc(mediaThumbUrl(props.siteId, assetId));
+      return () => {
+        cancelled = true;
+      };
+    }
+    // 文档一律先取 /media-pdf 的**整份原件**，由浏览器端 pdf.js 渲染（对齐 Knox 自己的
+    // DocumentReader）。服务端栅格化那条路（/media-preview 的页图）要求 Knox 装有
+    // mutool/pdftoppm/Ghostscript/ImageMagick 之一；缺失时只有第 1 页能出图
+    // （LibreOffice 只会导出第 1 页），第 2 页起一律 404 ——「点下一页看不到」即此因。
+    // 非 PDF 文档会被 /media-pdf 拒绝，由 PdfViewer 回退到媒体预览页，故这里**不再按 MIME
+    // 分流**：交付接口本就不回 MIME（content 的 fields 里没有该字段），靠它判断会永远走错分支。
+    if (kind === 'document') {
+      setSrc(mediaPdfUrl(props.siteId, assetId));
+      return () => {
+        cancelled = true;
+      };
+    }
     loadKnoxPlayUrl(props.siteId, assetId)
       .then((data) => {
         if (cancelled) return;
-        // 视频改嵌 Knox-Media 播放代理页（/media-play）：播放器与播放链接都来自 Knox-Media，
-        // 与后端媒体库预览一致，HLS 也由 PowerPlayer 解码；其余类型仍用短时可播地址取字节。
-        setSrc(kind === 'video' ? knoxPlayerUrl(props.siteId, assetId) : data.playUrl);
+        // 音视频都嵌 Knox-Media 播放代理页（/media-play）：播放器与可播地址都来自
+        // Knox-Media，HLS 由 PowerPlayer 解码。此前 audio 用 `data.playUrl` 直接喂
+        // `<audio src>`，而 Knox 对音频同样可能回 `playerMode=hls` 的 m3u8 ——
+        // 浏览器除 Safari 外不解码 HLS，音频无声。
+        // 其余类型仍用短时可播地址取字节。
+        const embedPlayer = kind === 'video' || kind === 'audio';
+        setSrc(embedPlayer ? knoxPlayerUrl(props.siteId, assetId) : data.playUrl);
         if (data.width > 0 && data.height > 0) {
           setBox({ w: data.width, h: data.height });
           onMeasureRef.current(data.width, data.height);
@@ -79,7 +114,11 @@ export function PreviewPane(props: {
   }, [props.asset.id, props.asset.storageUri, props.asset.thumbnail, props.siteId, props.imageAssetIds, kind]);
 
   useEffect(() => {
-    if (kind !== 'document' || !src) return;
+    // 仅当 src 指向真实 PDF 字节时才探测页幅。文档预览改走 /media-preview 后 src 是一页
+    // HTML，抓回来给 pdfFrame 解析只会得到 null（它要找 PDF 页头），纯属白跑一次请求。
+    // /media-pdf 是整份原件字节，虽然 pdfFrame 能解析，但那等于把 PDF 下两遍 ——
+    // 交给 PdfViewer 渲染后自行回报尺寸。
+    if (kind !== 'document' || !src || src.startsWith('/media-preview/') || src.startsWith('/media-pdf/')) return;
     let cancelled = false;
     fetch(src)
       .then((response) => (response.ok ? response.arrayBuffer() : null))
@@ -130,20 +169,46 @@ export function PreviewPane(props: {
     };
   }, [props.asset.id, src, kind]);
 
+  // 缩放态只作用于图片：文档的翻页/缩放/大纲/全屏已收进显示区顶部（PdfViewer 自己的壳内）。
+  const isZoomed = zoom !== 1 && kind === 'image';
+  // --zoom 供 style.css 计算 .fit 的放大尺寸（不能用 transform，那样裁掉了滚不到）。
+  const stageZoomStyle = { '--zoom': String(zoom) } as Record<string, string> as React.CSSProperties;
+
   const stageClass = [
     'preview-stage',
     kind === 'audio' ? 'stage-audio' : props.orientation === 'portrait' ? 'stage-port' : 'stage-land',
-    kind === 'document' || kind === 'text' ? 'stage-doc' : ''
+    kind === 'document' || kind === 'text' ? 'stage-doc' : '',
+    // 放大后舞台要能滚动平移，否则超出部分被裁掉且看不到
+    isZoomed ? 'is-zoomed' : ''
   ].filter(Boolean).join(' ');
+
+  // 只有图片还有独立工具条：文档的翻页/缩放/大纲/全屏已收进显示区顶部（PdfViewer 内），
+  // 视频/音频用播放器原生控件，再造一套会重复。
+  const hasToolbar = kind === 'image';
+
+  // 回退预览页要的是**媒体资产 id**（从 storage_uri_s 解析），不是内容项 id —— 两者是
+  // 不同的 UUID：/media-preview 按 media_asset 主键查，传内容项 id 会回「媒体资产不存在」。
+  const mediaId = previewTarget(props.asset).assetId;
+  const docFallbackSrc = mediaId ? mediaPreviewUrl(props.siteId, mediaId) : '';
 
   return (
     <div className="card">
-      <div className={stageClass}>
+      {hasToolbar ? (
+        <div className="preview-toolbar">
+          <span className="tb-label">缩放</span>
+          <button type="button" aria-label="缩小" disabled={zoom <= 0.5} onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))}>−</button>
+          <span className="tb-label">{Math.round(zoom * 100)}%</span>
+          <button type="button" aria-label="放大" disabled={zoom >= 3} onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.25) * 100) / 100))}>＋</button>
+          <button type="button" disabled={zoom === 1} onClick={() => setZoom(1)}>还原</button>
+        </div>
+      ) : null}
+      <div className={stageClass} style={isZoomed ? stageZoomStyle : undefined}>
         {playback === 'loading' ? <span className="preview-loading">正在加载预览</span> : null}
         <PreviewBody
           kind={kind}
           src={src}
-          embed={kind === 'video' && src.startsWith('/media-play/')}
+          docFallbackSrc={docFallbackSrc}
+          embed={(kind === 'video' || kind === 'audio') && src.startsWith('/media-play/')}
           loadError={loadError}
           asset={props.asset}
           playing={playback === 'playing' || playback === 'muted'}
@@ -174,6 +239,8 @@ export function PreviewPane(props: {
 function PreviewBody(props: {
   kind: PreviewKind;
   src: string;
+  /** 文档的非 PDF 回退预览页（PdfViewer 内部在取不到 PDF 时使用）。 */
+  docFallbackSrc: string;
   embed?: boolean;
   loadError?: string;
   asset: Asset;
@@ -197,6 +264,8 @@ function PreviewBody(props: {
         className="fit"
         src={props.src}
         alt={props.asset.title}
+        // 放大走 CSS 的 width/height × --zoom（见 style.css），不改布局语义，
+        // 也不触发 onMeasure 重算外层尺寸 —— 否则缩放会让下方信息区跟着跳动。
         onLoad={(event) => {
           props.onMeasure(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight);
           props.onReady();
@@ -241,6 +310,21 @@ function PreviewBody(props: {
     );
   }
   if (props.kind === 'audio') {
+    // 嵌 Knox-Media 播放代理页：HLS 由 PowerPlayer 解码，`<audio>` 无法直接取流。
+    // 此时不叠波形条——代理页自带播放器，两套控件会打架；且波形依赖 <audio> 的
+    // onPlay/onPause，跨 iframe 取不到事件，动画只会永远停着。
+    if (props.embed) {
+      return (
+        <iframe
+          key={props.asset.id}
+          className="fit"
+          title={props.asset.title}
+          src={props.src}
+          allow="autoplay"
+          onLoad={props.onReady}
+        />
+      );
+    }
     return (
       <>
         <div className={`wave-row ${props.playing ? 'is-on' : ''}`} aria-hidden="true">
@@ -264,12 +348,16 @@ function PreviewBody(props: {
     );
   }
   if (props.kind === 'document') {
+    // 走浏览器端 pdf.js（对齐 Knox 的 DocumentReader）：任意页可渲染，
+    // 总页数由 pdf.js 给出，因此末页能真正禁用「下一页」。
+    // 非 PDF 文档取不到原件时由 PdfViewer 内部回退到服务端预览页。
     return (
-      <iframe
-        className="fit"
-        title={props.asset.title}
+      <PdfViewer
         src={props.src}
-        onLoad={props.onReady}
+        fallbackSrc={props.docFallbackSrc}
+        title={props.asset.title}
+        onReady={props.onReady}
+        onMeasure={props.onMeasure}
       />
     );
   }

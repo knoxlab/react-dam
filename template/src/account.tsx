@@ -145,12 +145,13 @@ function readMember(raw: Partial<Member> | undefined): Member {
   return { name, username, groups, groupCodes, signedIn: Boolean(record.signedIn) };
 }
 
-/** 栏目打破继承后只看栏目自己的「添加子项」；未打破时沿用站点会员组权利。 */
+/** 栏目打破继承后只看栏目自己的「添加子项」；未打破时沿用站点会员组权利。
+ * 当前登录用户被个别授予的权利（viewerRights，服务端按会话计算）同样生效，与后台判定一致。 */
 export function uploadFolders(groups: ResourceGroup[], codes: string[]): ResourceGroup[] {
   return foldersWithRight(groups, codes, 'add-children');
 }
 
-/** 会员组「查看」，或有效授权中的匿名「查看」。栏目打破继承后只看栏目自己的授权。 */
+/** 会员组「查看」，或有效授权中的匿名「查看」，或当前登录用户自身的「查看」（viewerRights，服务端按会话沿有效授权链计算，与后台判定同口径）。 */
 export function viewFolders(groups: ResourceGroup[], codes: string[]): ResourceGroup[] {
   const byMember = new Set(foldersWithRight(groups, codes, 'view').map((group) => group.id));
   return groups.filter((group) => byMember.has(group.id) || group.anonymousView === true);
@@ -159,7 +160,8 @@ export function viewFolders(groups: ResourceGroup[], codes: string[]): ResourceG
 function foldersWithRight(groups: ResourceGroup[], codes: string[], right: string): ResourceGroup[] {
   const owned = new Set(codes.map((code) => code.trim().toLowerCase()).filter(Boolean));
   return groups.filter((group) =>
-    group.grants.some((grant) => owned.has(grant.code.trim().toLowerCase()) && grant.rights.includes(right))
+    group.grants.some((grant) => owned.has(grant.code.trim().toLowerCase()) && grant.rights.includes(right)) ||
+    (group.viewerRights ?? []).includes(right)
   );
 }
 

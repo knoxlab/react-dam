@@ -75,8 +75,9 @@ fields:
         - media_document
   - code: thumbnail_url_s
     name: 预览图
-    fieldType: STRING
+    fieldType: IMAGE
     groupName: 文件
+    helpText: 资源列表卡片预览图层读取此字段（IMAGE：存媒体资产编号，编辑时可本地重新上传/更换）。未显式上传时，上传登记会自动从 Knox-Media 同步预览资产（图片缩略/视频海报截帧/文档封面）；留空时前台按资源类型回退图标。
   - code: tags_ss
     name: 人工标签
     fieldType: TAG

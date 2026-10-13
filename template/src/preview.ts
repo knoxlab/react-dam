@@ -54,6 +54,78 @@ function jsonExternal(raw: string): string {
   }
 }
 
+/**
+ * 预览代理地址：`/media-thumb/{siteId}/{assetId}`。服务端按类型回源（图片缩略 / 音视频
+ * 海报截帧 / 文档封面），对 Knox 侧异步产物实时探测，且走 permitAll 允许匿名访问。
+ *
+ * 图片预览**不能**用 play-token 返回的 `playUrl`：Knox-Media 对图片也可能返回
+ * `playerMode=hls` 的 DRM 加密播放列表（`application/vnd.apple.mpegurl`），
+ * `<img src>` 拿到 m3u8 无法渲染。
+ */
+export function mediaThumbUrl(siteId: string, assetId: string): string {
+  return `/media-thumb/${encodeURIComponent(siteId)}/${assetId}`;
+}
+
+/**
+ * 文档预览页：`/media-preview/{siteId}/{assetId}?page=N`（原生 HTML5 预览，含上/下页导航）。
+ *
+ * 文档**不能**用 play-token 的 `playUrl`（同图片，Knox 也可能回 `playerMode=hls` 的 m3u8，
+ * 塞进 `<iframe>` 无法渲染），也不该用 `/media-file`——后端刻意把它排除在白名单外，
+ * 避免文档正文变成匿名可下载（`PlayDeliveryController#file` 的 kind 白名单只放 font/image）。
+ *
+ * **必须显式带 `page`**：不带时该端点只输出「文件名 + 大小」占位卡（`documentPage`），
+ * 带 `page` 才走 `documentPageWithImage` 出真实页图。
+ */
+export function mediaPreviewUrl(siteId: string, assetId: string, page = 1): string {
+  return `/media-preview/${encodeURIComponent(siteId)}/${assetId}?page=${page}`;
+}
+
+/**
+ * 文档原件字节（PDF），供浏览器端 pdf.js 客户端渲染。
+ *
+ * 与 {@link mediaPreviewUrl} 的分工：
+ * - `/media-preview` 出的是**服务端栅格化的单页 HTML**，依赖 Knox 侧有 mutool/pdftoppm/
+ *   Ghostscript/ImageMagick 之一；缺失时只有第 1 页能出图（LibreOffice 只会导出第 1 页），
+ *   第 2 页起一律 404 —— 「点下一页看不到」正是这个原因。
+ * - `/media-pdf` 出**整份 PDF**，由 pdf.js 在客户端渲染，不依赖任何服务端栅格化，
+ *   任意页可看、总页数也由 pdf.js 给出（对齐 Knox 自己的 DocumentReader 实现）。
+ *
+ * 它与 `/media-file` 的区别在于**刻意只为文档开**：`file()` 的白名单只放 font/image，
+ * 避免文档正文变成匿名可下载。这里显式放行 document(PDF)，访问控制与 `/media-preview`
+ * 同口径（同一个 `deliverable()` ACL）—— 即「能看到预览页的人就能拿到原件字节」。
+ */
+export function mediaPdfUrl(siteId: string, assetId: string): string {
+  return `/media-pdf/${encodeURIComponent(siteId)}/${assetId}`;
+}
+
+/**
+ * 资源列表卡片的预览图源：优先取内容模型记录的预览图 `thumbnail_url_s`（IMAGE 字段，
+ * 编辑时可本地重新上传）——
+ * 1. 服务端同步/本地上传存的是**预览资产编号**（裸 UUID 或 mediaRef JSON）→ 经
+ *    `/media-thumb/{siteId}/{assetId}` 代理按类型回源（图片缩略 / 音视频海报截帧 /
+ *    文档封面，代理对 Knox 侧异步产物实时探测，就绪前后同一地址生效）；
+ * 2. 编辑者保存的站内代理地址或外部 http(s) 地址 → 原样使用；
+ * 3. 空值 → 由媒体原件引用推导代理地址；文本片段与无原件的资源返回空串，
+ *    卡片回退类型图标。
+ */
+export function assetPreviewSrc(siteId: string, asset: Asset): string {
+  const recorded = (asset.thumbnail ?? '').trim();
+  if (recorded) {
+    // 形态 2：编辑者显式保存的 URL 原样展示
+    if (recorded.startsWith('/') || /^https?:\/\//i.test(recorded)) return recorded;
+    // 形态 1：资产编号 → 预览代理
+    const recordedAssetId = mediaAssetId(recorded);
+    if (recordedAssetId && siteId) return `/media-thumb/${encodeURIComponent(siteId)}/${recordedAssetId}`;
+    return '';
+  }
+  const kind = previewKind(asset.kind);
+  if (kind === 'text') return '';
+  const target = previewTarget(asset);
+  if (target.url) return kind === 'image' ? target.url : '';
+  if (!target.assetId || !siteId) return '';
+  return `/media-thumb/${encodeURIComponent(siteId)}/${target.assetId}`;
+}
+
 export function frameOf(asset: Asset): { w: number; h: number } {
   if ((asset.width ?? 0) > 0 && (asset.height ?? 0) > 0) return { w: asset.width ?? 0, h: asset.height ?? 0 };
   return { w: 16, h: 9 };

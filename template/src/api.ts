@@ -168,6 +168,7 @@ function toFolderGrant(row: {
   parentId?: string;
   grants?: { name?: string; code?: string; rights?: string[] }[];
   anonymousView?: boolean;
+  viewerRights?: string[];
 }): ResourceGroup {
   return {
     id: row.id ?? '',
@@ -182,7 +183,8 @@ function toFolderGrant(row: {
       code: grant.code ?? '',
       rights: (grant.rights ?? []).filter((right) => RIGHTS.includes(right))
     })),
-    anonymousView: row.anonymousView === true
+    anonymousView: row.anonymousView === true,
+    viewerRights: (row.viewerRights ?? []).filter((right) => RIGHTS.includes(right))
   };
 }
 
@@ -243,6 +245,7 @@ export async function askPublished(siteId: string, question: string, sessionId: 
 async function loadFolderGrants(siteId: string): Promise<ResourceGroup[] | null> {
   const delivered = await fetch(`/api/v1/delivery/sites/${encodeURIComponent(siteId)}/folders`, {
     headers: { Accept: 'application/json' },
+    credentials: 'include',
     cache: 'no-store'
   });
   if (delivered.ok) {

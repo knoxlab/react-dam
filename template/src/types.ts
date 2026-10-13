@@ -73,6 +73,11 @@ export interface ResourceGroup {
   grants: MemberGrant[];
   /** 有效授权里匿名角色具备「查看」。栏目打破继承后只反映栏目自己的授权。 */
   anonymousView?: boolean;
+  /**
+   * 当前登录用户在该栏目上的视角权利（服务端按会话计算，含站点/栏目上对个别用户的授权，
+   * 与后台判定同口径）。匿名访客为空数组；未登录/老后端缺省。
+   */
+  viewerRights?: string[];
 }
 
 export interface Catalog {

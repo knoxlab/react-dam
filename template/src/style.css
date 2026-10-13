@@ -448,15 +448,22 @@ a { color: inherit; text-decoration: none; }
 
 .preview-stage { height: 400px; background: linear-gradient(135deg, #31435C 0%, #1C2738 100%); position: relative; }
 .preview-stage svg { display: block; width: 100%; height: 100%; }
+/* 单行：左侧信息行宽度固定，右侧按钮区独揽伸缩，绝不回行（放不下的按键收进「更多」）。 */
 .preview-bar {
-  min-height: 52px; display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3);
+  min-height: 52px; display: flex; align-items: center; flex-wrap: nowrap; gap: var(--sp-3);
   padding: 8px var(--sp-5); border-top: 1px solid var(--border);
 }
 .preview-bar .grow { flex: 1 1 auto; }
+/* .engage 要自己吃掉剩余宽度，占位 span 必须让位：
+   若两者都参与 grow，可用宽度会被分走一半，测出来的「放得下几个」就不准。 */
+.preview-bar > .grow { flex: 0 0 0; min-width: 0; }
 .preview-facts {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
+  /* 不可压缩：左侧信息行宽度恒为自身内容宽度，收缩全部由右侧按钮区承担。
+     （flex-basis:auto + shrink:0 → 只要容器放得下就是原宽，正好符合「左侧宽度不变」） */
+  flex: 0 0 auto;
   gap: 6px 10px;
   font-size: 13px;
   color: var(--text-2);
@@ -661,6 +668,9 @@ body.no-sidebar .sidebar { display: none; }
 .thumb-locked { background: #E8EAED; }
 
 .asset-thumb, .row-thumb { position: relative; }
+/* 预览图层：资源有预览图时直接展示（图片缩略/视频海报/文档封面），加载失败回退类型图标 */
+.asset-thumb.has-preview { background: #E8EAED; }
+.asset-thumb .thumb-img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .thumb-tag {
   position: absolute; left: 10px; bottom: 12px;
   height: 22px; padding: 0 8px; border-radius: var(--r-tag);
@@ -835,14 +845,37 @@ select.select {
   position: relative;
   overflow: hidden;
 }
-.preview-stage.stage-land { aspect-ratio: 16 / 9; }
-.preview-stage.stage-port { aspect-ratio: 9 / 16; max-height: 72vh; }
+/* width:100% 是关键：aspect-ratio 配 max-height 时，若宽度是 auto，
+   高度被夹住后会**从宽高比反推宽度**，导致舞台比卡片窄、右侧留白
+   （「预览窗口没有铺满该区域」）。宽度定死为 100% 后，max-height 只截高度、不再收窄。 */
+.preview-stage.stage-land { aspect-ratio: 16 / 9; width: 100%; }
+.preview-stage.stage-port { aspect-ratio: 9 / 16; width: 100%; max-height: 78vh; }
 .preview-stage.stage-audio {
   height: 168px;
   aspect-ratio: auto;
   background: linear-gradient(90deg, #31435c 0%, #1c2738 100%);
 }
-.preview-stage.stage-doc { background: #e8eaed; }
+/* 文档舞台高度不再由 aspect-ratio 硬摆一个假比例：改由页面本身撑开（高度自适应）。
+   固定比例下，窄卡片里竖版 A4 会被压小、横版又留大片空白，都让正文小字更难辨认。 */
+.preview-stage.stage-doc {
+  background: #e8eaed;
+  aspect-ratio: auto;
+  height: auto;
+  /* 舞台高度由内容决定后，百分比 max-height 已无参照（父高 auto → 视作 none），
+     显式写出来，免得依赖各浏览器对「百分比无法解析」的实现细节。 */
+  max-height: none;
+  min-height: 480px;
+}
+/* .pdf-shell 从「绝对定位铺满舞台」改为参与布局，舞台高度才等于画布高度。 */
+.preview-stage.stage-doc .pdf-shell {
+  position: relative;
+  inset: auto;
+}
+/* 非全屏下舞台高度由内容（画布）撑开：canvas 的 max-height 百分比参照父高 auto，
+   浏览器按 none 处理，于是页面按自身高度把舞台撑高，即「高度自适应」。
+   限定 :not(.is-fullscreen) 是因为全屏后这块就是整个视口，高度必须受约束 ——
+   放开会让下面 .pdf-canvas 的 max-height 被这条覆盖掉，页面又会溢出屏幕。 */
+.preview-stage.stage-doc .pdf-shell:not(.is-fullscreen) .pdf-canvas { max-height: none; }
 .preview-stage .fit {
   position: absolute;
   inset: 0;
@@ -898,6 +931,214 @@ select.select {
   border-radius: 4px;
 }
 .stage-doc .preview-loading { color: var(--text-2); background: rgba(255, 255, 255, .82); }
+/* 客户端 pdf.js 渲染：壳是纵向 flex —— 工具条贴顶，页面区域在剩余空间里居中。
+   --pad-x/--pad-y 是页面四周留白，**必须与 PdfViewer.tsx 里的 PAD_X/PAD_Y 一致**：
+   JS 按它算「正好放下」的倍率，CSS 按它兜底，两边不一致就会出现 JS 放得下、
+   CSS 又单边压掉，而单边压缩正是宽高比变形的来源。 */
+.pdf-shell {
+  --pad-x: 32px;
+  --pad-y: 24px;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pdf-shell.is-fullscreen {
+  background: #1c2738;
+  --pad-x: 48px;
+  --pad-y: 32px;
+}
+/* 文档工具条：显示区顶部居中，全部图标化。全屏元素就是壳本身，故全屏后它照样贴顶。 */
+.pdf-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, .94);
+  color: var(--text-2);
+  z-index: 2;
+}
+.pdf-shell.is-fullscreen .pdf-toolbar {
+  background: rgba(28, 39, 56, .92);
+  border-bottom-color: rgba(255, 255, 255, .14);
+  color: #fff;
+}
+/* 按钮 30×30 配 20px 图标：原 28×18 折算描边仅 1.3px，偏细偏小。 */
+.pdf-toolbar .tb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.pdf-toolbar .tb-btn:hover:not(:disabled) { background: rgba(32, 33, 36, .08); }
+.pdf-shell.is-fullscreen .pdf-toolbar .tb-btn:hover:not(:disabled) { background: rgba(255, 255, 255, .16); }
+.pdf-toolbar .tb-btn:disabled { opacity: .32; cursor: default; }
+.pdf-toolbar .tb-btn.is-on { background: var(--primary); color: #fff; }
+/* 页码/倍率是数字，等宽 + 定宽，翻两位数时不把两侧图标挤得来回跳。 */
+.pdf-toolbar .tb-page,
+.pdf-toolbar .tb-zoom {
+  min-width: 46px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  user-select: none;
+}
+.pdf-shell.is-fullscreen .pdf-toolbar .tb-page,
+.pdf-shell.is-fullscreen .pdf-toolbar .tb-zoom { color: rgba(255, 255, 255, .78); }
+.pdf-toolbar .tb-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 6px;
+  background: var(--line);
+}
+.pdf-shell.is-fullscreen .pdf-toolbar .tb-sep { background: rgba(255, 255, 255, .24); }
+/* 页面区域：画布在其中居中；放大后改可滚动，居中策略仍由 margin:auto 承担。 */
+.pdf-pagearea {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  /* 主轴用 flex-start 而非 center：真正的居中放在画布的 auto 边距上，理由见下 */
+  justify-content: flex-start;
+  overflow: hidden;
+}
+/* height 必须留 auto：宽度是明确值，高度由画布固有宽高比反推。
+   只有这样，max-width / max-height 任一侧被夹住时，浏览器才会按比例重算另一侧，
+   显示比例恒等于位图比例。之前 width/height 都写死成固定像素，全屏下可用高度不足时
+   只有高度被压、宽度纹丝不动 —— 这正是「全屏后文档被压扁」的直接成因。 */
+.pdf-canvas {
+  /* 水平居中交给 auto 边距而非 justify-content:center：
+     内容比显示区窄时自由空间为正，边距吃掉它 → 居中；
+     内容更宽时自由空间为负、边距归 0 → 锚定起点，两个方向都还滚得到。
+     若用 justify-content:center，溢出时左侧/顶部会被裁掉且永远滚不过去。 */
+  margin-left: auto;
+  margin-right: auto;
+  max-width: calc(100% - var(--pad-x));
+  max-height: calc(100% - var(--pad-y));
+  width: auto;
+  height: auto;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(32, 33, 36, .12);
+}
+.pdf-shell.is-fullscreen .pdf-canvas {
+  box-shadow: 0 12px 48px rgba(0, 0, 0, .55);
+}
+/* 放大后需要平移查看：页面区域改为可滚动。
+   注意不能用 transform:scale —— 被裁剪的内容在起始侧滚不到（负溢出不可滚动），
+   所以放大的是**布局尺寸**，配合 pdf.js 提高的渲染倍率保持清晰。 */
+.pdf-shell.is-zoomed .pdf-pagearea {
+  overflow: auto;
+  align-items: flex-start;
+}
+.pdf-shell.is-zoomed .pdf-canvas {
+  /* 四边 auto：缩放后仍居中（自由空间为正时），放大溢出时自动退回锚定起点。
+     这条正是「缩小/放大后页面不再居左」的修复点。 */
+  margin: auto;
+  max-width: calc((100% - var(--pad-x)) * var(--zoom, 1));
+  max-height: calc((100% - var(--pad-y)) * var(--zoom, 1));
+}
+/* 渲染不了时的空态（且没有可用回退页）。 */
+.pdf-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 32px;
+  text-align: center;
+  color: var(--text-2);
+}
+.pdf-empty strong { font-size: 14px; color: var(--text-1); }
+.pdf-empty span { font-size: 12px; }
+/* ---- 预览顶部工具条（图片 / 文档）：缩放与文档大纲 ---- */
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: 8px var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.preview-toolbar .tb-sep { flex: 1 1 auto; }
+.preview-toolbar .tb-label { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
+.preview-toolbar button {
+  border: 1px solid var(--line);
+  background: var(--fill-neutral, #fff);
+  border-radius: 4px;
+  min-width: 26px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+}
+.preview-toolbar button:disabled { opacity: .4; cursor: default; }
+.preview-toolbar button.is-on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+/* 放大后需要平移查看：舞台与 PDF 容器都改为可滚动。
+   注意不能用 transform:scale —— 被裁剪的内容在起始侧滚不到（负溢出不可滚动），
+   所以放大的是**布局尺寸**，配合 pdf.js 提高的渲染倍率保持清晰。 */
+.preview-stage.is-zoomed { overflow: auto; }
+.preview-stage.is-zoomed .fit {
+  /* .fit 原本 inset:0（尺寸被舞台钉死），放大态改为按 --zoom 扩展，object-fit:contain 仍生效 */
+  inset: auto;
+  left: 0;
+  top: 0;
+  width: calc(100% * var(--zoom, 1));
+  height: calc(100% * var(--zoom, 1));
+}
+/* 文档的放大在 .pdf-shell 内部处理（见上 .pdf-shell.is-zoomed），舞台不再参与。 */
+/* ---- 文档大纲面板 ---- */
+.pdf-outline {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: min(240px, 62%);
+  background: rgba(255, 255, 255, .97);
+  border-right: 1px solid var(--line);
+  box-shadow: 6px 0 18px rgba(32, 33, 36, .14);
+  overflow: auto;
+  z-index: 3;
+  padding: 8px 0;
+}
+.pdf-outline .ol-title {
+  padding: 4px 12px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.pdf-outline button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-1, #202124);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pdf-outline button:hover { background: var(--fill-neutral, #f1f3f4); }
+.pdf-outline button.is-current { background: rgba(26, 115, 232, .12); color: var(--primary); }
+.pdf-outline .ol-empty { padding: 6px 12px; font-size: 12px; color: var(--text-2); }
 .detail-land,
 .detail-port {
   display: grid;
@@ -911,19 +1152,79 @@ select.select {
     "history side";
 }
 .detail-port {
-  grid-template-columns: minmax(280px, 440px) minmax(0, 1fr);
+  /* 预览列给到近半宽：竖版舞台（9:16）按宽度定高，列太窄会让预览明显小于信息列。
+     用百分比而非固定 440px，宽屏下两栏同比放大，比例才协调。 */
+  grid-template-columns: minmax(300px, 46%) minmax(0, 1fr);
   grid-template-areas:
     "preview side"
     "history history";
 }
 .preview-slot { grid-area: preview; min-width: 0; }
+
+/* ---- 文档预览版式：显示区 600~900px，右侧吃剩余宽度、放不上就整列隐藏 ---- */
+/* container-type 挂在栅格的**父级**上：@container 规则不能作用于容器自身，
+   挂在 .detail-port 上的话，改它自己列数的规则会被整体忽略，
+   只剩后代 .side-slot 的 display:none 生效，列数没变却少了一列内容，反而溢出。
+   父级 .page-body 的内容宽度与栅格宽度一致，所以阈值口径不变。 */
+.page-body.is-doc { container-type: inline-size; }
+/* 横版文档（detail-land）也走同一套：否则它整行通栏，宽度不受 900 上限约束，
+   同一种资源换个页面朝向就换一套版式，读起来反而不连贯。 */
+.detail-port.is-doc,
+.detail-land.is-doc {
+  /* areas 必须一并声明：窄屏媒体查询（≤991px）会把 .detail-port 的 areas 改成三行单列，
+     若本规则只改列数，两者的列数/行数对不上 → grid-template-areas 整条被判为无效。 */
+  grid-template-areas:
+    "preview side"
+    "history history";
+  /* 预览列 600~900px。上限取 min(900, 100% - 256)：
+     256 = 右侧信息列的可读底线 240 + 栅格间距 16。
+     这样在中等宽度下预览列会主动让到 600~900 之间，把右侧挤到「够用」为止，
+     而不是一路吃满 900 把信息列压成一条竖缝。
+     下限用 min(600px, 100%) 兜底：视口更窄时退回可用宽度，避免整页横向滚动。 */
+  grid-template-columns: minmax(min(600px, 100%), min(900px, calc(100% - 256px))) minmax(240px, 1fr);
+}
+/* 连「600 预览 + 16 间距 + 240 信息列」都放不下时，整列隐藏，
+   而不是把它压成一条既读不出、也点不动的竖缝；此时预览列上限放开到 900。 */
+@container (max-width: 859px) {
+  .detail-port.is-doc,
+  .detail-land.is-doc {
+    grid-template-columns: minmax(min(600px, 100%), 900px);
+    grid-template-areas:
+      "preview"
+      "history";
+  }
+  .detail-port.is-doc .side-slot,
+  .detail-land.is-doc .side-slot { display: none; }
+}
 .engage {
+  position: relative;
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  flex-wrap: wrap;
+  /* 单行：放不下的按键由 JS 收进「更多」，这里绝不换行 */
+  flex-wrap: nowrap;
+  /* 与左侧信息行同排，吃掉剩余的全部宽度。
+     flex-basis:auto + grow/shrink 各 1 → 最终宽度恒等于「容器 − 信息行 − 间隔」，
+     **与按钮内容多少无关**：收起按键不会反过来改变可用宽度，否则会来回震荡。
+     早先用 flex-basis:100% 是因为它独占一行、宽度天然与内容无关；现在改为同排，
+     这个性质必须由「信息行不压缩 + 本元素吃掉全部剩余」重新保证。
+     注意不要再加 margin-left:auto —— auto 边距若先分走剩余空间，本元素宽度就退化成内容宽度，
+     上面的不变式就破了。 */
+  flex: 1 1 auto;
+  min-width: 0;
   gap: 8px;
-  margin-left: auto;
+}
+/* 测量行：常驻渲染全部按键以量取自然宽度（行内被收起的是 display:none，量不到）。
+   绝对定位 + visibility:hidden → 不占位、不可点，只提供 offsetWidth。 */
+.engage-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+  visibility: hidden;
+  pointer-events: none;
 }
 .engage-btn {
   display: inline-flex;
@@ -937,15 +1238,58 @@ select.select {
   color: var(--text-2);
   font-size: 13px;
   cursor: pointer;
+  /* 宽度不可被压缩：实际行内宽度必须与测量行一致，否则按量算出的「放得下」会溢出 */
+  flex-shrink: 0;
 }
 .engage-btn em {
   font-style: normal;
   font-variant-numeric: tabular-nums;
 }
+/* 「更多」只留图标：文字已去掉，按钮宽度 = 图标 + 左右内边距，不再随文案伸缩 */
+.engage-btn.engage-btn-icon { padding: 0 10px; justify-content: center; }
 .engage-btn.is-on { color: var(--primary); background: var(--primary-weak); }
 .engage-btn:hover { background: #e8eaed; }
 .engage-btn.is-on:hover { background: var(--primary-weak); }
 .engage-more { position: relative; }
+/* 被收进「更多」的按键整块移出流（含 .engage-more 外层，否则 0 宽仍会占掉一个 gap） */
+.engage-btn.is-overflow,
+.engage-more.is-overflow { display: none; }
+/* 一个都没收进来 → 菜单没内容，按钮整体隐藏。
+   display:none 使 offsetWidth = 0，测量逻辑因此把它算进「可用宽度」，
+   而隐藏只会让余量变大，不会把已经收起的按键顶回去 → 不会来回震荡。 */
+.engage-more.is-empty { display: none; }
+.engage-menu button.mi {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 带子菜单的菜单项（分享）：箭头靠右，标明悬停会展开 */
+.engage-menu .sub-arrow {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--text-2);
+}
+/* 「更多」菜单里的分享项：hover 弹出子菜单（复制链接/微信/微博），不再平铺进本菜单 */
+.engage-has-sub { position: relative; }
+.engage-sub {
+  position: absolute;
+  /* 默认向右弹出 —— 与父项右侧的 › 方向一致；
+     菜单本身是按按钮右边缘锚定的，靠近视口右沿时向右会溢出，那种情况由 JS 加 .is-left 翻到左边。 */
+  left: calc(100% + 6px);
+  right: auto;
+  top: -6px;
+  z-index: 1;
+  min-width: 140px;
+  padding: 6px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .08);
+  display: flex;
+  flex-direction: column;
+}
+.engage-sub.is-left { left: auto; right: calc(100% + 6px); }
+/* 贴着父项向下展开会越过视口下沿时，改为贴着父项向上展开（JS 展开后同帧实测决定） */
+.engage-sub.is-up { top: auto; bottom: -6px; }
 .engage-menu {
   position: absolute;
   right: 0;
@@ -989,6 +1333,8 @@ select.select {
       "history";
   }
   .preview-stage.stage-port { width: min(420px, 100%); max-height: none; }
+  /* 文档不受这条「竖版图片限宽」约束：窄屏也要尽量铺满，正文才读得清 */
+  .preview-stage.stage-port.stage-doc { width: 100%; }
 }
 
 .ask-page {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccountBar, folderTree, toggleFavorite, uploadFolders, useMemberStore, viewFolders } from '../account';
 import { approvalLabel, fileExt, formatBytes, formatWhen, kindLabel } from '../format';
+import { assetPreviewSrc } from '../preview';
 import type { Asset, AssetKind, Catalog, DataSource, ResourceGroup } from '../types';
 import { Page, SearchIcon, Star, Thumb, UploadIcon } from '../ui';
 
@@ -343,7 +344,12 @@ function AssetCard(props: { asset: Asset; siteId: string; onOpen: (id: string) =
         }
       }}
     >
-      <Thumb kind={asset.kind} ext={fileExt(asset.mime, asset.kind)} flag={pending ? 'AI 待审' : undefined} />
+      <Thumb
+        kind={asset.kind}
+        ext={fileExt(asset.mime, asset.kind)}
+        flag={pending ? 'AI 待审' : undefined}
+        src={assetPreviewSrc(props.siteId, asset)}
+      />
       <div className="asset-info">
         {pending ? <div className="note-box note-warn">AI 建议 {asset.aiTags.length} 个标签待确认</div> : null}
         <span className="asset-name">{asset.title}</span>

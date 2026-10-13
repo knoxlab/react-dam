@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { trackEvent, analyticsRoute } from '../analytics';
 import { downloadContentFile, likeMemberComment, loadContentActions, loadContentComments, loadContentForm, recordContentView, submitContentComment, toggleContentLike, type ContentActions, type ContentComment, type ContentFormNode } from '../api';
 import { AccountBar, toggleFavorite, useMemberStore } from '../account';
@@ -280,6 +280,8 @@ export function DetailPage(props: {
   const current = versions[0];
   const orientation = orientationOf(asset, measured ?? undefined);
   const portrait = orientation === 'portrait';
+  // 文档预览要给足宽度才够清晰（正文小字在窄栏里会糊成一团），故单独打标记走「保底 1000px」版式。
+  const isDocument = previewKind(asset.kind) === 'document';
   const storedId = mediaAssetId(asset.storageUri);
   const stageId = storedId || (previewKind(asset.kind) === 'image' ? imageAssetIds[0] ?? '' : '');
   const extraImages = imageAssetIds.filter((id) => id !== stageId);
@@ -329,7 +331,10 @@ export function DetailPage(props: {
           <AccountBar />
         </div>
       </header>
-      <div className="page-body">
+      {/* 容器查询的锚点必须放在**栅格之上**：@container 规则无法作用于容器自身，
+          若把 container-type 挂在 .detail-port 上，改它自己列数的规则会被整体忽略，
+          只剩后代（.side-slot 的 display:none）生效 → 列数没变却少了一列内容，反而溢出。 */}
+      <div className={`page-body${isDocument ? ' is-doc' : ''}`}>
         <div className="head-row" style={{ alignItems: 'center' }}>
           <div className="grow" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             <h1 className="page-title" style={{ fontSize: 20 }}>{asset.title}</h1>
@@ -341,7 +346,7 @@ export function DetailPage(props: {
           </div>
         </div>
 
-        <div className={portrait ? 'detail-port' : 'detail-land'}>
+        <div className={`${portrait ? 'detail-port' : 'detail-land'}${isDocument ? ' is-doc' : ''}`}>
           <div className="preview-slot">{preview}</div>
           <div className="history-slot" id="detail-history">
             <div className="card">
@@ -620,6 +625,13 @@ export function DetailPage(props: {
   );
 }
 
+/**
+ * 互动区主操作的**优先级顺序**（同时也是 DOM 顺序）：放不下时从尾部开始收，
+ * 也就是最不重要的 AI识别 / 分享 先让位，点赞收藏评论最不容易被收走。
+ */
+const PRIMARY = ['like', 'favorite', 'comment', 'download', 'share', 'ai'] as const;
+type PrimaryKey = (typeof PRIMARY)[number];
+
 function DetailEngage(props: {
   siteId: string;
   assetId: string;
@@ -635,10 +647,23 @@ function DetailEngage(props: {
 }) {
   const [more, setMore] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  // 「更多」菜单里的分享项：hover 时向左弹出子菜单（复制链接/微信/微博），不再平铺进本菜单
+  const [shareSub, setShareSub] = useState(false);
+  // 子菜单贴着父项展开后可能越过视口边沿，展开后同帧实测一次决定往哪个方向翻
+  const [shareSubUp, setShareSubUp] = useState(false);
+  const [shareSubLeft, setShareSubLeft] = useState(false);
+  const subTimer = useRef<number | null>(null);
+  const shareSubRef = useRef<HTMLDivElement>(null);
   const [menuPos, setMenuPos] = useState({ top: 0, right: 0, above: false });
   const moreRef = useRef<HTMLDivElement>(null);
   const shareRef = useRef<HTMLDivElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  // 真实按钮藏起来后就是 display:none，量不到宽度；测量行常驻且不参与布局，宽度随时可取。
+  const measRefs = useRef<Partial<Record<PrimaryKey, HTMLSpanElement | null>>>({});
+  const [visibleCount, setVisibleCount] = useState<number>(PRIMARY.length);
   const liked = Boolean(props.actions?.liked);
+  // 收进「更多」菜单的按键（后缀：优先级低的先走）
+  const overflowKeys = PRIMARY.slice(visibleCount);
   // 预览卡片是 overflow: hidden，菜单用 fixed 定位按按钮坐标显示，避免被卡片裁剪。
   function menuAnchor(event: ReactMouseEvent<HTMLElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -660,6 +685,7 @@ function DetailEngage(props: {
     const dismiss = () => {
       setMore(false);
       setShareOpen(false);
+      setShareSub(false);
     };
     document.addEventListener('pointerdown', close);
     window.addEventListener('scroll', dismiss, true);
@@ -670,6 +696,84 @@ function DetailEngage(props: {
       window.removeEventListener('resize', dismiss);
     };
   }, [more, shareOpen]);
+
+  // 「更多」收起时子菜单是随之卸载的，但状态还留着 —— 不复位的话下次打开「更多」会直接把子菜单弹开。
+  useEffect(() => {
+    if (!more) setShareSub(false);
+  }, [more]);
+
+  // 溢出项归零会让「更多」按钮连同菜单一起 display:none；若此刻菜单还开着（按键变宽把溢出项挤没了），
+  // 必须一并收掉 —— 否则按钮下次显示时会带着旧的锚点位置直接弹开。
+  useEffect(() => {
+    if (overflowKeys.length === 0 && more) setMore(false);
+  }, [overflowKeys.length, more]);
+
+  // 子菜单与父项之间留了 6px 空隙，鼠标斜着过去会短暂离开两者的公共容器 → 立即关会闪断。
+  // 延迟 140ms 再关；期间重新进入就取消，等同于一个零宽的悬停走廊。
+  function openShareSub() {
+    if (subTimer.current != null) {
+      window.clearTimeout(subTimer.current);
+      subTimer.current = null;
+    }
+    setShareSub(true);
+  }
+  function closeShareSub() {
+    if (subTimer.current != null) window.clearTimeout(subTimer.current);
+    subTimer.current = window.setTimeout(() => {
+      subTimer.current = null;
+      setShareSub(false);
+    }, 140);
+  }
+  useEffect(
+    () => () => {
+      if (subTimer.current != null) window.clearTimeout(subTimer.current);
+    },
+    [],
+  );
+  // 展开后（同一帧、绘制前）量一次：默认往右下弹，越出视口就翻到左边/上边。
+  // 两项测量互不干扰——水平翻转不改变垂直位置。
+  useLayoutEffect(() => {
+    if (!shareSub) return;
+    const el = shareSubRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setShareSubLeft(rect.right > window.innerWidth - 8);
+    setShareSubUp(rect.bottom > window.innerHeight - 8);
+  }, [shareSub]);
+
+  // 单行自适应：把放不下的按键按优先级收进「更多」。
+  // 可用宽度取自 .engage 自身。它的宽度由布局保证「与内容无关」——
+  // 信息行 .preview-facts 是 flex-shrink:0 的定宽项，.engage 用 flex:1 1 auto 吃掉全部剩余空间，
+  // 于是收起按键不会反过来改变可用宽度（否则会来回震荡）。
+  // 用 useLayoutEffect 而非 useEffect：在绘制前算好，避免先铺满再收起的闪烁。
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    const GAP = 8;
+    const measure = () => {
+      const moreBtn = moreRef.current?.querySelector('.engage-btn') as HTMLElement | null;
+      const moreWidth = moreBtn?.offsetWidth ?? 0;
+      const available = row.clientWidth;
+      let count = 0;
+      for (let n = 1; n <= PRIMARY.length; n += 1) {
+        let buttons = 0;
+        for (let i = 0; i < n; i += 1) buttons += measRefs.current[PRIMARY[i]]?.offsetWidth ?? 0;
+        // n 个按键彼此之间 (n-1) 个间隔，再加到「更多」的 1 个间隔 → 共 n 个
+        if (buttons + n * GAP + moreWidth <= available) count = n;
+        else break;
+      }
+      setVisibleCount((prev) => (prev === count ? prev : count));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(row);
+    for (const key of PRIMARY) {
+      const el = measRefs.current[key];
+      // 点赞数/评论数到达后按钮会变宽，只观察容器量不到这种变化
+      if (el) observer.observe(el);
+    }
+    return () => observer.disconnect();
+  }, []);
 
   function fail(reason: unknown, fallback: string) {
     props.onToast(reason instanceof Error ? reason.message : fallback);
@@ -743,63 +847,104 @@ function DetailEngage(props: {
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  // 按键内容集中定义：行内、测量行、「更多」菜单三处共用同一份，
+  // 免得文案/图标/计数各写一遍，改了一处漏了另外两处。
+  const primary: {
+    key: PrimaryKey;
+    /** 悬停提示（AI识别 的提示语与显示文案不同，故单列一个字段） */
+    title: string;
+    label: string;
+    icon: ReactNode;
+    count?: number | null;
+    active?: boolean;
+    run?: () => void;
+  }[] = [
+    { key: 'like', title: '点赞', label: '点赞', icon: <ThumbIcon on={liked} />, count: props.actions?.likeCount, active: liked, run: () => void like() },
+    { key: 'favorite', title: '收藏', label: '收藏', icon: <StarIcon on={props.favorited} />, count: props.actions?.favoriteCount, active: props.favorited, run: () => void favorite() },
+    { key: 'comment', title: '评论', label: '评论', icon: <CommentIcon />, count: props.commentCount, run: () => props.onCommented() },
+    { key: 'download', title: '下载', label: '下载', icon: <DownloadIcon />, run: () => void download() },
+    // 分享是带子菜单的特例：溢出时不在行内展开，而是把三个分享项平铺进「更多」
+    { key: 'share', title: '分享', label: '分享', icon: <ShareIcon /> },
+    { key: 'ai', title: '查看 AI 识别结果', label: 'AI识别', icon: <AiIcon />, run: () => props.onRecognize() }
+  ];
+  const label = (spec: (typeof primary)[number]) => (
+    <>
+      {spec.icon}
+      <span>{spec.label}</span>
+      <Count value={spec.count} />
+    </>
+  );
+
   return (
-    <div className="engage">
-      <button className={`engage-btn ${liked ? 'is-on' : ''}`} type="button" title="点赞" aria-pressed={liked} onClick={() => void like()}>
-        <ThumbIcon on={liked} />
-        <span>点赞</span>
-        <Count value={props.actions?.likeCount} />
-      </button>
-      <button className={`engage-btn ${props.favorited ? 'is-on' : ''}`} type="button" title="收藏" aria-pressed={props.favorited} onClick={() => void favorite()}>
-        <StarIcon on={props.favorited} />
-        <span>收藏</span>
-        <Count value={props.actions?.favoriteCount} />
-      </button>
-      <button className="engage-btn" type="button" title="评论" onClick={props.onCommented}>
-        <CommentIcon />
-        <span>评论</span>
-        <Count value={props.commentCount} />
-      </button>
-      <button className="engage-btn" type="button" title="下载" onClick={() => void download()}>
-        <DownloadIcon />
-        <span>下载</span>
-      </button>
-      <div className="engage-more" ref={shareRef}>
-        <button
-          className="engage-btn"
-          type="button"
-          title="分享"
-          aria-expanded={shareOpen}
-          onClick={(event) => {
-            if (!shareOpen) menuAnchor(event);
-            setShareOpen((open) => !open);
-            setMore(false);
-          }}
-        >
-          <ShareIcon />
-          <span>分享</span>
-        </button>
-        {shareOpen ? (
-          <div
-            className={`engage-menu is-fixed ${menuPos.above ? 'is-above' : ''}`}
-            role="menu"
-            style={{ top: menuPos.top, right: menuPos.right }}
+    <div className="engage" ref={rowRef}>
+      {/* 测量行：始终渲染全部按键，供 ResizeObserver 量取自然宽度 */}
+      <div className="engage-measure" aria-hidden="true">
+        {primary.map((spec) => (
+          <span
+            className="engage-btn"
+            key={spec.key}
+            ref={(el) => {
+              measRefs.current[spec.key] = el;
+            }}
           >
-            <button type="button" role="menuitem" onClick={() => { setShareOpen(false); copyShareLink(); }}>复制链接</button>
-            <button type="button" role="menuitem" onClick={() => { setShareOpen(false); openWeChat(); }}>微信</button>
-            <button type="button" role="menuitem" onClick={() => { setShareOpen(false); openWeibo(); }}>微博</button>
-          </div>
-        ) : null}
+            {label(spec)}
+          </span>
+        ))}
       </div>
-      <button className="engage-btn" type="button" title="查看 AI 识别结果" onClick={props.onRecognize}>
-        <AiIcon />
-        <span>AI识别</span>
-      </button>
-      <div className="engage-more" ref={moreRef}>
+
+      {primary.map((spec, index) => {
+        const hidden = index >= visibleCount;
+        if (spec.key === 'share') {
+          return (
+            <div className={`engage-more${hidden ? ' is-overflow' : ''}`} ref={shareRef} key={spec.key}>
+              <button
+                className="engage-btn"
+                type="button"
+                title="分享"
+                aria-expanded={shareOpen}
+                onClick={(event) => {
+                  if (!shareOpen) menuAnchor(event);
+                  setShareOpen((open) => !open);
+                  setMore(false);
+                }}
+              >
+                {label(spec)}
+              </button>
+              {shareOpen ? (
+                <div
+                  className={`engage-menu is-fixed ${menuPos.above ? 'is-above' : ''}`}
+                  role="menu"
+                  style={{ top: menuPos.top, right: menuPos.right }}
+                >
+                  <button type="button" role="menuitem" onClick={() => { setShareOpen(false); copyShareLink(); }}>复制链接</button>
+                  <button type="button" role="menuitem" onClick={() => { setShareOpen(false); openWeChat(); }}>微信</button>
+                  <button type="button" role="menuitem" onClick={() => { setShareOpen(false); openWeibo(); }}>微博</button>
+                </div>
+              ) : null}
+            </div>
+          );
+        }
+        return (
+          <button
+            key={spec.key}
+            className={`engage-btn${spec.active ? ' is-on' : ''}${hidden ? ' is-overflow' : ''}`}
+            type="button"
+            title={spec.title}
+            aria-pressed={spec.active === undefined ? undefined : spec.active}
+            onClick={() => spec.run?.()}
+          >
+            {label(spec)}
+          </button>
+        );
+      })}
+
+      {/* 一个都没收进来 → 菜单是空的，按钮连同空菜单一起隐藏 */}
+      <div className={`engage-more${overflowKeys.length > 0 ? '' : ' is-empty'}`} ref={moreRef}>
         <button
-          className="engage-btn"
+          className="engage-btn engage-btn-icon"
           type="button"
           title="更多"
+          aria-label="更多"
           aria-expanded={more}
           onClick={(event) => {
             if (!more) menuAnchor(event);
@@ -808,7 +953,6 @@ function DetailEngage(props: {
           }}
         >
           <MoreIcon />
-          <span>更多</span>
         </button>
         {more ? (
           <div
@@ -816,7 +960,55 @@ function DetailEngage(props: {
             role="menu"
             style={{ top: menuPos.top, right: menuPos.right }}
           >
-            <button type="button" role="menuitem" onClick={() => { setMore(false); props.onCommented(); }}>查看评论</button>
+            {overflowKeys.map((key) => {
+              const spec = primary.find((item) => item.key === key);
+              if (!spec) return null;
+              if (key === 'share') {
+                return (
+                  <div
+                    key="share"
+                    className="engage-has-sub"
+                    onMouseEnter={openShareSub}
+                    onMouseLeave={closeShareSub}
+                  >
+                    {/* 与行内按键共用 label()，图标/文案/计数一处定义三处生效 */}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="mi"
+                      aria-haspopup="menu"
+                      aria-expanded={shareSub}
+                      onClick={() => (shareSub ? closeShareSub() : openShareSub())}
+                    >
+                      {label(spec)}
+                      <span className="sub-arrow" aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                          <path d="M9.5 5.5 16 12l-6.5 6.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </span>
+                    </button>
+                    {shareSub ? (
+                      <div
+                        className={`engage-sub${shareSubUp ? ' is-up' : ''}${shareSubLeft ? ' is-left' : ''}`}
+                        role="menu"
+                        ref={shareSubRef}
+                        onMouseEnter={openShareSub}
+                        onMouseLeave={closeShareSub}
+                      >
+                        <button type="button" role="menuitem" onClick={() => { setMore(false); setShareSub(false); copyShareLink(); }}>复制链接</button>
+                        <button type="button" role="menuitem" onClick={() => { setMore(false); setShareSub(false); openWeChat(); }}>微信</button>
+                        <button type="button" role="menuitem" onClick={() => { setMore(false); setShareSub(false); openWeibo(); }}>微博</button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              }
+              return (
+                <button key={key} type="button" role="menuitem" className="mi" onClick={() => { setMore(false); spec.run?.(); }}>
+                  {label(spec)}
+                </button>
+              );
+            })}
           </div>
         ) : null}
       </div>

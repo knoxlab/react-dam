@@ -14,6 +14,7 @@ export default defineConfig({
       '/media-play': { target: 'http://localhost:8080', changeOrigin: true },
       '/media-stream': { target: 'http://localhost:8080', changeOrigin: true },
       '/media-preview': { target: 'http://localhost:8080', changeOrigin: true },
+      '/media-pdf': { target: 'http://localhost:8080', changeOrigin: true },
       '/media-thumb': { target: 'http://localhost:8080', changeOrigin: true },
       '/media-file': { target: 'http://localhost:8080', changeOrigin: true }
     }
