@@ -16,6 +16,7 @@ import {
 } from '../preview';
 import { ImageLightbox, type LightboxSlide } from './ImageLightbox';
 import { PdfViewer } from './PdfViewer';
+import AudioPlayer from './AudioPlayer';
 
 type Playback = 'loading' | 'playing' | 'muted' | 'blocked' | 'ready' | 'paused' | 'ended';
 
@@ -31,7 +32,7 @@ export function PreviewPane(props: {
   const [src, setSrc] = useState(() => initialSrc(props.asset));
   const [loadError, setLoadError] = useState('');
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
-  const mediaRef = useRef<HTMLVideoElement | HTMLAudioElement>(null);
+  const mediaRef = useRef<HTMLVideoElement | null>(null);
   const onMeasureRef = useRef(props.onMeasure);
   onMeasureRef.current = props.onMeasure;
   const known = frameOf(props.asset);
@@ -90,6 +91,20 @@ export function PreviewPane(props: {
         cancelled = true;
       };
     }
+    // 音频不再走「取到 Knox 播放地址 → 嵌代理页」这条路：Knox 对音频同样只出 HLS
+    // （`playerMode=hls`），代理页里那句裸 `<audio src=m3u8>` 除 Safari 外一律解不了，
+    // 而 HLS 分片挂在 Knox 的 JIT 会话上、经代理回源恒定超时 —— 这正是「音频格式无法播放」的根因。
+    // 改由 AudioPlayer 直接取上传时的原件字节（/media-original），播放器界面一并自绘
+    // （参考 docs/music-player.html），且默认不自动播放。
+    // 因此这里既不需要预取 src，也不该把 loading 挂在外层占位上 —— 播放器自带加载态。
+    if (kind === 'audio') {
+      setLoadError('');
+      setSrc('');
+      setPlayback('ready');
+      return () => {
+        cancelled = true;
+      };
+    }
     loadKnoxPlayUrl(props.siteId, assetId)
       .then((data) => {
         if (cancelled) return;
@@ -139,7 +154,9 @@ export function PreviewPane(props: {
   }, [kind, src]);
 
   useEffect(() => {
-    if (kind !== 'video' && kind !== 'audio') return;
+    // 音频的播放器已换成自绘组件（AudioPlayer），它没有 <audio>/<video> ref 可驱动，
+    // 且按需求**默认不自动播放**，故这里只管视频。
+    if (kind !== 'video') return;
     const media = mediaRef.current;
     if (!media || !src) return;
     let cancelled = false;
@@ -216,10 +233,10 @@ export function PreviewPane(props: {
           kind={kind}
           src={src}
           docFallbackSrc={docFallbackSrc}
-          embed={(kind === 'video' || kind === 'audio') && src.startsWith('/media-play/')}
+          embed={kind === 'video' && src.startsWith('/media-play/')}
           loadError={loadError}
           asset={props.asset}
-          playing={playback === 'playing' || playback === 'muted'}
+          siteId={props.siteId}
           mediaRef={mediaRef}
           onReady={() => setPlayback((current) => (current === 'loading' ? 'ready' : current))}
           onPlay={(muted) => setPlayback(muted ? 'muted' : 'playing')}
@@ -302,14 +319,24 @@ function PreviewBody(props: {
   embed?: boolean;
   loadError?: string;
   asset: Asset;
-  playing: boolean;
-  mediaRef: RefObject<HTMLVideoElement | HTMLAudioElement | null>;
+  siteId: string;
+  mediaRef: RefObject<HTMLVideoElement | null>;
   onReady: () => void;
   onPlay: (muted: boolean) => void;
   onPause: () => void;
   onEnded: () => void;
   onMeasure: (width: number, height: number) => void;
 }) {
+  if (props.kind === 'audio') {
+    // 音频完全自绘：解流（hls.js）、进度、控件都在 AudioPlayer 内，舞台只托着这张卡片。
+    // 它**不依赖 props.src** —— 自己取短时效播放凭证，故放在「无 src 即无可播原件」
+    // 的兜底之前，避免空 src 把播放器整块替换成一句错误提示。
+    const mediaId = previewTarget(props.asset).assetId;
+    const poster = props.asset.thumbnail && mediaId && props.siteId
+      ? mediaThumbUrl(props.siteId, mediaId)
+      : undefined;
+    return <AudioPlayer siteId={props.siteId} asset={props.asset} mediaAssetId={mediaId} poster={poster} />;
+  }
   if (!props.src && props.kind !== 'text') {
     const hasRef = Boolean(mediaAssetId(props.asset.storageUri) || props.asset.storageUri.trim());
     const message = props.loadError
@@ -350,7 +377,7 @@ function PreviewBody(props: {
     return (
       <video
         key={props.asset.id}
-        ref={props.mediaRef as RefObject<HTMLVideoElement>}
+        ref={props.mediaRef}
         className="fit"
         src={props.src}
         controls
@@ -365,44 +392,6 @@ function PreviewBody(props: {
         onPause={props.onPause}
         onEnded={props.onEnded}
       />
-    );
-  }
-  if (props.kind === 'audio') {
-    // 嵌 Knox-Media 播放代理页：HLS 由 PowerPlayer 解码，`<audio>` 无法直接取流。
-    // 此时不叠波形条——代理页自带播放器，两套控件会打架；且波形依赖 <audio> 的
-    // onPlay/onPause，跨 iframe 取不到事件，动画只会永远停着。
-    if (props.embed) {
-      return (
-        <iframe
-          key={props.asset.id}
-          className="fit"
-          title={props.asset.title}
-          src={props.src}
-          allow="autoplay"
-          onLoad={props.onReady}
-        />
-      );
-    }
-    return (
-      <>
-        <div className={`wave-row ${props.playing ? 'is-on' : ''}`} aria-hidden="true">
-          {Array.from({ length: 48 }, (_, index) => (
-            <i key={index} style={{ height: `${28 + ((index * 37) % 70)}%`, animationDelay: `${(index % 8) * 0.08}s` }} />
-          ))}
-        </div>
-        <audio
-          key={props.asset.id}
-          ref={props.mediaRef as RefObject<HTMLAudioElement>}
-          src={props.src}
-          controls
-          preload="auto"
-          style={{ position: 'absolute', left: 16, right: 16, bottom: 12, width: 'calc(100% - 32px)' }}
-          onLoadedData={props.onReady}
-          onPlay={(event) => props.onPlay(event.currentTarget.muted)}
-          onPause={props.onPause}
-          onEnded={props.onEnded}
-        />
-      </>
     );
   }
   if (props.kind === 'document') {
