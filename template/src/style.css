@@ -661,9 +661,8 @@ body.no-sidebar .sidebar { display: none; }
 .thumb-image  { background: linear-gradient(135deg, #8AB4F8 0%, #5B7FE0 100%); }
 .thumb-video  { background: linear-gradient(135deg, #7BC5A8 0%, #3E8E6E 100%); }
 .thumb-audio  { background: linear-gradient(135deg, #F2A7C3 0%, #C75C87 100%); }
-.thumb-pdf    { background: linear-gradient(135deg, #F6C89B 0%, #D97A31 100%); }
 .thumb-doc    { background: linear-gradient(135deg, #A7C7F2 0%, #4A7FC1 100%); }
-.thumb-txt    { background: linear-gradient(135deg, #CBD5E8 0%, #8E9AAF 100%); }
+.thumb-other  { background: linear-gradient(135deg, #D3D7DE 0%, #6E7787 100%); }
 .thumb-ai     { background: linear-gradient(135deg, #B8A9E8 0%, #6C5CB8 100%); }
 .thumb-locked { background: #E8EAED; }
 
@@ -1233,53 +1232,14 @@ select.select {
 }
 .pdf-empty strong { font-size: 14px; color: var(--text-1); }
 .pdf-empty span { font-size: 12px; }
-/* ---- 预览顶部工具条（图片 / 文档）：缩放与文档大纲 ---- */
-.preview-toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  flex-wrap: wrap;
-  padding: 8px var(--sp-4);
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-2);
-}
-.preview-toolbar .tb-sep { flex: 1 1 auto; }
-.preview-toolbar .tb-label { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
-.preview-toolbar button {
-  border: 1px solid var(--line);
-  background: var(--fill-neutral, #fff);
-  border-radius: 4px;
-  min-width: 26px;
-  padding: 3px 8px;
-  font-size: 12px;
-  color: inherit;
-  cursor: pointer;
-}
-.preview-toolbar button:disabled { opacity: .4; cursor: default; }
-.preview-toolbar button.is-on {
-  background: var(--primary);
-  border-color: var(--primary);
-  color: #fff;
-}
-/* 放大后需要平移查看：舞台与 PDF 容器都改为可滚动。
-   注意不能用 transform:scale —— 被裁剪的内容在起始侧滚不到（负溢出不可滚动），
-   所以放大的是**布局尺寸**，配合 pdf.js 提高的渲染倍率保持清晰。 */
-.preview-stage.is-zoomed { overflow: auto; }
-.preview-stage.is-zoomed .fit {
-  /* .fit 原本 inset:0（尺寸被舞台钉死），放大态改为按 --zoom 扩展，object-fit:contain 仍生效 */
-  inset: auto;
-  left: 0;
-  top: 0;
-  width: calc(100% * var(--zoom, 1));
-  height: calc(100% * var(--zoom, 1));
-}
-/* 文档的放大在 .pdf-shell 内部处理（见上 .pdf-shell.is-zoomed），舞台不再参与。 */
-/* ---- 「查看大图」入口按钮：压在图片右下角 ---- */
+/* 文档的放大在 .pdf-shell 内部处理（见上 .pdf-shell.is-zoomed），舞台不参与缩放。 */
+
+/* ---- 「查看大图」入口按钮：默认隐藏，鼠标移入图片时浮现于图片正中 ---- */
 .view-large {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   z-index: 3;
   display: inline-flex;
   align-items: center;
@@ -1292,9 +1252,25 @@ select.select {
   color: #fff;
   font-size: 13px;
   cursor: pointer;
-  transition: background .15s ease, border-color .15s ease;
+  /* 用 opacity 而非 visibility：visibility:hidden 会把按钮踢出 Tab 序列，键盘用户就到不了大图。
+     隐藏期另给 pointer-events:none，免得这个看不见的按钮白占图片正中、把普通点击吃掉。 */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease, background .15s ease, border-color .15s ease;
+}
+/* 悬停舞台（图片铺满舞台，二者同域）即浮现；按钮自身被悬停或键盘聚焦时保持可见并可点。
+   舞台与按钮是包含关系，鼠标滑向按钮全程都在 .preview-stage:hover 内，不会闪没。 */
+.preview-stage:hover .view-large,
+.view-large:hover,
+.view-large:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
 }
 .view-large:hover { background: var(--primary); border-color: var(--primary); }
+/* 触屏没有 hover：不常显的话入口在移动端等于不存在。 */
+@media (hover: none) {
+  .view-large { opacity: 1; pointer-events: auto; }
+}
 /* 舞台里那条 `.preview-stage svg { width:100%; height:100% }` 是给占位图形用的，
    按钮内的小图标必须按更高特异性覆写回来，否则会被拉成整块画布大小。 */
 .preview-stage .view-large svg { width: 16px; height: 16px; flex: 0 0 auto; }

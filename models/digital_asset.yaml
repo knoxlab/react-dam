@@ -1,6 +1,6 @@
 code: digital_asset
 name: 数字资源
-description: 图片、音视频、文档、PDF 与文本片段的统一目录。二进制文件由站点自动预置的 media_* 模型存储，本模型保存可检索的元数据。
+description: 图片、音视频、文档与其他资源的统一目录。二进制文件由站点自动预置的 media_* 模型存储，本模型保存可检索的元数据。
 fields:
   - code: asset_code_s
     name: 资源编码
@@ -30,10 +30,8 @@ fields:
           label: 音频
         - value: document
           label: 文档
-        - value: pdf
-          label: PDF
-        - value: text
-          label: 文本片段
+        - value: other
+          label: 其他
   - code: summary_t
     name: 摘要
     fieldType: LONG_TEXT
@@ -42,10 +40,10 @@ fields:
     publicIndex: true
     highlight: true
   - code: body_t
-    name: 正文或文本片段
+    name: 正文
     fieldType: LONG_TEXT
     groupName: 描述
-    helpText: 文本片段把正文直接放在这里；其他类型可写说明。
+    helpText: 文本类内容把正文直接放在这里；其他类型可写说明。
   - code: mime_type_s
     name: MIME 类型
     fieldType: STRING

@@ -1,13 +1,13 @@
 import type { Asset, AssetKind } from './types';
 
 export type Orientation = 'landscape' | 'portrait';
-export type PreviewKind = 'image' | 'video' | 'document' | 'audio' | 'text';
+export type PreviewKind = 'image' | 'video' | 'document' | 'audio' | 'other';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function previewKind(kind: AssetKind): PreviewKind {
-  if (kind === 'pdf' || kind === 'document') return 'document';
-  if (kind === 'text') return 'text';
+  if (kind === 'document') return 'document';
+  if (kind === 'other') return 'other';
   return kind;
 }
 
@@ -105,7 +105,7 @@ export function mediaPdfUrl(siteId: string, assetId: string): string {
  *    `/media-thumb/{siteId}/{assetId}` 代理按类型回源（图片缩略 / 音视频海报截帧 /
  *    文档封面，代理对 Knox 侧异步产物实时探测，就绪前后同一地址生效）；
  * 2. 编辑者保存的站内代理地址或外部 http(s) 地址 → 原样使用；
- * 3. 空值 → 由媒体原件引用推导代理地址；文本片段与无原件的资源返回空串，
+ * 3. 空值 → 由媒体原件引用推导代理地址；其他类型与无原件的资源返回空串，
  *    卡片回退类型图标。
  */
 export function assetPreviewSrc(siteId: string, asset: Asset): string {
@@ -119,7 +119,7 @@ export function assetPreviewSrc(siteId: string, asset: Asset): string {
     return '';
   }
   const kind = previewKind(asset.kind);
-  if (kind === 'text') return '';
+  if (kind === 'other') return '';
   const target = previewTarget(asset);
   if (target.url) return kind === 'image' ? target.url : '';
   if (!target.assetId || !siteId) return '';
@@ -132,14 +132,14 @@ export function frameOf(asset: Asset): { w: number; h: number } {
 }
 
 export function orientationOf(asset: Asset, measured?: { w: number; h: number }): Orientation {
-  if (previewKind(asset.kind) === 'audio' || previewKind(asset.kind) === 'text') return 'landscape';
+  if (previewKind(asset.kind) === 'audio' || previewKind(asset.kind) === 'other') return 'landscape';
   const frame = measured && measured.w > 0 && measured.h > 0 ? measured : frameOf(asset);
   return frame.w >= frame.h ? 'landscape' : 'portrait';
 }
 
 export function layoutLabel(kind: PreviewKind, orientation: Orientation): string {
   if (kind === 'audio') return '横屏音频';
-  if (kind === 'text') return '横屏文本';
+  if (kind === 'other') return '横屏其他';
   const face = orientation === 'portrait' ? '竖屏' : '横屏';
   const name = kind === 'image' ? '图片' : kind === 'video' ? '视频' : '文档';
   return `${face}${name}`;

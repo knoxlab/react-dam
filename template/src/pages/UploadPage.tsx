@@ -784,7 +784,8 @@ function fileKind(file: File): AssetKind {
   if (file.type.startsWith('video/') || VIDEO_EXT.includes(ext)) return 'video';
   if (file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return 'image';
   if (file.type.startsWith('audio/') || ['mp3', 'wav', 'm4a', 'aac'].includes(ext)) return 'audio';
-  if (ext === 'pdf' || file.type === 'application/pdf') return 'pdf';
-  if (['txt', 'md'].includes(ext) || file.type.startsWith('text/')) return 'text';
+  // PDF 归入文档（文档预览本就用 pdf.js 渲染整份 PDF）；纯文本没有独立类型，落「其他」。
+  if (ext === 'pdf' || file.type === 'application/pdf') return 'document';
+  if (['txt', 'md'].includes(ext) || file.type.startsWith('text/')) return 'other';
   return 'document';
 }

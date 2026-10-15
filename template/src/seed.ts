@@ -80,7 +80,7 @@ export const SEED: Catalog = {
       id: 'seed-1004',
       title: '安装手册',
       code: 'AST-1004',
-      kind: 'pdf',
+      kind: 'document',
       summary: '现场安装、接线与验收步骤，共 36 页。',
       body: '',
       mime: 'application/pdf',
@@ -105,7 +105,7 @@ export const SEED: Catalog = {
       id: 'seed-1005',
       title: '交付查询示例',
       code: 'AST-1005',
-      kind: 'text',
+      kind: 'other',
       summary: '其他应用拉取已发布资源时使用的查询片段。',
       body: 'GET /api/v1/delivery/sites/{siteId}/contents/query?contentType=digital_asset&limit=50&orderBy=updatedAt&status=PUBLISHED',
       mime: 'text/plain',
@@ -346,7 +346,7 @@ export const SEED: Catalog = {
       code: 'platform-knowledge',
       path: '/platform-knowledge',
       department: '平台部',
-      description: '栏目 /platform-knowledge。接口说明与可复用文本片段。',
+      description: '栏目 /platform-knowledge。接口说明与可复用说明片段。',
       grants: [{ name: '平台部', code: 'dam-platform', rights: ['view', 'edit', 'add-children', 'download'] }]
     },
     {

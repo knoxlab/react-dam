@@ -566,7 +566,7 @@ export function DetailPage(props: {
                 <span className="card-title">基本信息</span>
               </div>
               <div className="kv"><span className="kv-k">资源类型</span><span className="kv-v">{kindLabel(asset.kind)} · {fileExt(asset.mime, asset.kind)}</span></div>
-              {frame && previewKind(asset.kind) !== 'audio' && previewKind(asset.kind) !== 'text' ? (
+              {frame && previewKind(asset.kind) !== 'audio' && previewKind(asset.kind) !== 'other' ? (
                 <div className="kv"><span className="kv-k">画面</span><span className="kv-v num">{frame.w} × {frame.h}</span></div>
               ) : null}
               <div className="kv"><span className="kv-k">大小</span><span className="kv-v num">{formatBytes(asset.bytes)}</span></div>

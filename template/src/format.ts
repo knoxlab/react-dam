@@ -52,8 +52,6 @@ const EXT: Record<string, string> = {
 
 export function fileExt(mime: string, kind: AssetKind): string {
   if (EXT[mime]) return EXT[mime];
-  if (kind === 'pdf') return 'PDF';
-  if (kind === 'text') return 'TXT';
   const tail = mime.split('/').pop() || kind;
   return tail.replace('vnd.', '').slice(0, 8).toUpperCase();
 }
@@ -64,8 +62,7 @@ export function kindLabel(kind: AssetKind): string {
     audio: '音频',
     video: '视频',
     document: '文档',
-    pdf: 'PDF',
-    text: '文本片段'
+    other: '其他'
   }[kind];
 }
 
@@ -73,8 +70,7 @@ export function thumbClass(kind: AssetKind): string {
   if (kind === 'image') return 'thumb-image';
   if (kind === 'video') return 'thumb-video';
   if (kind === 'audio') return 'thumb-audio';
-  if (kind === 'pdf') return 'thumb-pdf';
-  if (kind === 'text') return 'thumb-txt';
+  if (kind === 'other') return 'thumb-other';
   return 'thumb-doc';
 }
 

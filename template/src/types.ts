@@ -1,4 +1,4 @@
-export type AssetKind = 'image' | 'video' | 'audio' | 'document' | 'pdf' | 'text';
+export type AssetKind = 'image' | 'video' | 'audio' | 'document' | 'other';
 export type Approval = 'draft' | 'pending' | 'approved' | 'rejected';
 export type License = 'all-rights' | 'internal' | 'cc-by' | 'cc-by-sa' | 'public-domain';
 

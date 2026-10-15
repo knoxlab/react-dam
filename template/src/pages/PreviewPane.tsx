@@ -40,15 +40,10 @@ export function PreviewPane(props: {
   const [playback, setPlayback] = useState<Playback>(src ? 'loading' : 'ready');
   // 大图查看层（图片专属）：铺满窗口，带缩放/旋转/拖拽/前后翻图。
   const [lightbox, setLightbox] = useState(false);
-  // 预览顶部工具条状态：这里只管图片。文档的翻页/缩放/大纲/全屏工具条
-  // 收在 PdfViewer 自己的壳内（顶部居中），因为全屏元素是壳，工具条必须在里面才会跟着全屏。
-  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     setBox(null);
     setPlayback(src ? 'loading' : 'ready');
-    // 换资源时缩放必须归位，否则上一条 200% 放大会留在新资源上。
-    setZoom(1);
   }, [props.asset.id, src]);
 
   useEffect(() => {
@@ -105,6 +100,16 @@ export function PreviewPane(props: {
         cancelled = true;
       };
     }
+    // 「其他」类型没有对应的播放器/渲染器：不取原件、不换播放凭证，
+    // 直接交给下方 preview-paper 展示摘要与正文。
+    if (kind === 'other') {
+      setLoadError('');
+      setSrc('');
+      setPlayback('ready');
+      return () => {
+        cancelled = true;
+      };
+    }
     loadKnoxPlayUrl(props.siteId, assetId)
       .then((data) => {
         if (cancelled) return;
@@ -113,7 +118,8 @@ export function PreviewPane(props: {
         // `<audio src>`，而 Knox 对音频同样可能回 `playerMode=hls` 的 m3u8 ——
         // 浏览器除 Safari 外不解码 HLS，音频无声。
         // 其余类型仍用短时可播地址取字节。
-        const embedPlayer = kind === 'video' || kind === 'audio';
+        // audio 已在上方 effect 开头提前 return（走播放代理页），此处只剩 video 需要嵌入。
+        const embedPlayer = kind === 'video';
         setSrc(embedPlayer ? knoxPlayerUrl(props.siteId, assetId) : data.playUrl);
         if (data.width > 0 && data.height > 0) {
           setBox({ w: data.width, h: data.height });
@@ -189,22 +195,11 @@ export function PreviewPane(props: {
     };
   }, [props.asset.id, src, kind]);
 
-  // 缩放态只作用于图片：文档的翻页/缩放/大纲/全屏已收进显示区顶部（PdfViewer 自己的壳内）。
-  const isZoomed = zoom !== 1 && kind === 'image';
-  // --zoom 供 style.css 计算 .fit 的放大尺寸（不能用 transform，那样裁掉了滚不到）。
-  const stageZoomStyle = { '--zoom': String(zoom) } as Record<string, string> as React.CSSProperties;
-
   const stageClass = [
     'preview-stage',
     kind === 'audio' ? 'stage-audio' : props.orientation === 'portrait' ? 'stage-port' : 'stage-land',
-    kind === 'document' || kind === 'text' ? 'stage-doc' : '',
-    // 放大后舞台要能滚动平移，否则超出部分被裁掉且看不到
-    isZoomed ? 'is-zoomed' : ''
+    kind === 'document' || kind === 'other' ? 'stage-doc' : ''
   ].filter(Boolean).join(' ');
-
-  // 只有图片还有独立工具条：文档的翻页/缩放/大纲/全屏已收进显示区顶部（PdfViewer 内），
-  // 视频/音频用播放器原生控件，再造一套会重复。
-  const hasToolbar = kind === 'image';
 
   // 回退预览页要的是**媒体资产 id**（从 storage_uri_s 解析），不是内容项 id —— 两者是
   // 不同的 UUID：/media-preview 按 media_asset 主键查，传内容项 id 会回「媒体资产不存在」。
@@ -218,16 +213,7 @@ export function PreviewPane(props: {
 
   return (
     <div className="card">
-      {hasToolbar ? (
-        <div className="preview-toolbar">
-          <span className="tb-label">缩放</span>
-          <button type="button" aria-label="缩小" disabled={zoom <= 0.5} onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.25) * 100) / 100))}>−</button>
-          <span className="tb-label">{Math.round(zoom * 100)}%</span>
-          <button type="button" aria-label="放大" disabled={zoom >= 3} onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.25) * 100) / 100))}>＋</button>
-          <button type="button" disabled={zoom === 1} onClick={() => setZoom(1)}>还原</button>
-        </div>
-      ) : null}
-      <div className={stageClass} style={isZoomed ? stageZoomStyle : undefined}>
+      <div className={stageClass}>
         {playback === 'loading' ? <span className="preview-loading">正在加载预览</span> : null}
         <PreviewBody
           kind={kind}
@@ -256,7 +242,7 @@ export function PreviewPane(props: {
       </div>
       <div className="preview-bar">
         <span className="preview-facts">
-          {kind !== 'audio' && kind !== 'text' && frame ? <span>{frame.w} × {frame.h}</span> : null}
+          {kind !== 'audio' && kind !== 'other' && frame ? <span>{frame.w} × {frame.h}</span> : null}
           <span>{kind === 'video' ? '播放' : '浏览'} {factCount(props.asset.viewCount)}</span>
           <span>发布于 {publishDay(props.asset.publishedAt || props.asset.updatedAt)}</span>
         </span>
@@ -337,7 +323,7 @@ function PreviewBody(props: {
       : undefined;
     return <AudioPlayer siteId={props.siteId} asset={props.asset} mediaAssetId={mediaId} poster={poster} />;
   }
-  if (!props.src && props.kind !== 'text') {
+  if (!props.src && props.kind !== 'other') {
     const hasRef = Boolean(mediaAssetId(props.asset.storageUri) || props.asset.storageUri.trim());
     const message = props.loadError
       || (hasRef ? '原件暂时无法播放，请稍后刷新重试' : (props.asset.summary || '这条资源还没有可播放的原件'));
@@ -349,8 +335,8 @@ function PreviewBody(props: {
         className="fit"
         src={props.src}
         alt={props.asset.title}
-        // 放大走 CSS 的 width/height × --zoom（见 style.css），不改布局语义，
-        // 也不触发 onMeasure 重算外层尺寸 —— 否则缩放会让下方信息区跟着跳动。
+        // 图片铺满舞台（object-fit:contain），onMeasure 只回传**原图**尺寸给外层，
+        // 不传布局渲染尺寸 —— 否则下方信息区会跟着容器变化跳动。
         onLoad={(event) => {
           props.onMeasure(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight);
           props.onReady();

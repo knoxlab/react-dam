@@ -11,8 +11,7 @@ const KINDS: { id: 'all' | AssetKind; label: string }[] = [
   { id: 'audio', label: '音频' },
   { id: 'video', label: '视频' },
   { id: 'document', label: '文档' },
-  { id: 'pdf', label: 'PDF' },
-  { id: 'text', label: '文本片段' }
+  { id: 'other', label: '其他' }
 ];
 
 const PAGE_SIZE = 8;
@@ -132,7 +131,7 @@ export function LibraryPage(props: {
           <div className="grow">
             <h1 className="page-title">资源库</h1>
             <p className="page-sub">
-              共 {props.catalog.assets.length} 个资源 · 覆盖图片 / 音频 / 视频 / 文档 / PDF / 文本片段
+              共 {props.catalog.assets.length} 个资源 · 覆盖图片 / 音频 / 视频 / 文档 / 其他
               <span className={`badge source-pill ${props.source === 'live' ? 'badge-success' : 'badge-neutral'}`}>
                 {props.source === 'loading' ? '正在读取' : props.source === 'live' ? '已发布内容' : '示例数据'}
               </span>

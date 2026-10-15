@@ -137,8 +137,7 @@ function thumbName(kind: AssetKind): string {
   if (kind === 'image') return 'thumb-image';
   if (kind === 'video') return 'thumb-video';
   if (kind === 'audio') return 'thumb-audio';
-  if (kind === 'pdf') return 'thumb-pdf';
-  if (kind === 'text') return 'thumb-txt';
+  if (kind === 'other') return 'thumb-other';
   return 'thumb-doc';
 }
 
@@ -158,20 +157,19 @@ function ThumbArt({ kind }: { kind: AssetKind }) {
       </svg>
     );
   }
-  if (kind === 'text') {
-    return (
-      <svg viewBox="0 0 272 160" preserveAspectRatio="none" fill="none">
-        <rect x="86" y="42" width="100" height="76" rx="6" fill="#fff" fillOpacity=".92" />
-        <path d="M100 60h72M100 74h72M100 88h72M100 102h44" stroke="#8E9AAF" strokeWidth="2.6" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  if (kind === 'pdf' || kind === 'document') {
-    const stroke = kind === 'pdf' ? '#D97A31' : '#4A7FC1';
+  if (kind === 'document') {
     return (
       <svg viewBox="0 0 272 160" preserveAspectRatio="none" fill="none">
         <rect x="112" y="44" width="48" height="62" rx="6" fill="#fff" fillOpacity=".9" />
-        <path d="M124 58h24M124 70h24M124 82h16" stroke={stroke} strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M124 58h24M124 70h24M124 82h16" stroke="#4A7FC1" strokeWidth="2.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (kind === 'other') {
+    return (
+      <svg viewBox="0 0 272 160" preserveAspectRatio="none" fill="none">
+        <path d="M136 44l38 20v32l-38 20-38-20V64l38-20Z" stroke="#fff" strokeWidth="2.4" strokeLinejoin="round" opacity=".92" />
+        <path d="M98 64l38 20 38-20M136 84v32" stroke="#fff" strokeWidth="2.4" strokeLinejoin="round" opacity=".92" />
       </svg>
     );
   }

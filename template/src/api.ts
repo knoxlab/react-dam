@@ -11,7 +11,7 @@ import type {
   ShareLink
 } from './types';
 
-const KINDS: AssetKind[] = ['image', 'video', 'audio', 'document', 'pdf', 'text'];
+const KINDS: AssetKind[] = ['image', 'video', 'audio', 'document', 'other'];
 const LICENSES: License[] = ['all-rights', 'internal', 'cc-by', 'cc-by-sa', 'public-domain'];
 const APPROVALS: Approval[] = ['draft', 'pending', 'approved', 'rejected'];
 
@@ -601,11 +601,21 @@ export async function downloadContentFile(siteId: string, mediaId: string) {
     method: 'POST',
     credentials: 'include'
   });
-  if (res.status === 404) throw new Error('当前没有下载权限');
+  // 404 = 资源不存在或查看权未通过；403 = 看得到但被下载开关/网络/时间段/下载权拦下，
+  // 后端会带上稳定错误码与对应文案，直接透出即可，避免一律误报成「没有下载权限」。
+  if (res.status === 404) throw new Error('资源不存在或已被删除');
   if (!res.ok) throw new Error(await apiError(res));
   const body = await res.json() as { url?: string };
   if (!body.url) throw new Error('没有拿到下载地址');
-  window.open(body.url, '_blank', 'noopener');
+  // 用 <a download> 触发下载：window.open 会在新标签页内联打开 PDF，而且它发生在 await 之后，
+  // 还可能被浏览器弹窗拦截器静默拦掉。
+  const link = document.createElement('a');
+  link.href = body.url;
+  link.download = '';
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 export async function changeMemberPassword(siteId: string, currentPassword: string, newPassword: string) {
