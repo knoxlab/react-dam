@@ -1,8 +1,27 @@
-import type { Catalog } from './types';
+import type { Asset, Catalog, MediaItem } from './types';
 
-/** 未发布内容时的示例目录。字段名与 models/*.yaml 一致，便于对照录入。 */
-export const SEED: Catalog = {
-  assets: [
+/** 种子资产：`mediaList` 可省略，由 {@link seedMedia} 按顶层单媒体字段推导；多媒体示例逐条写全。 */
+type SeedAsset = Omit<Asset, 'mediaList'> & { mediaList?: MediaItem[] };
+
+/**
+ * 关联媒体列表：显式 `mediaList`（对应 models/digital_asset.yaml 的 `media_items` 重复组）优先；
+ * 否则按顶层单媒体字段（storage_uri_s 等）推导唯一一行 —— 与 api.ts 的历史字段归一化同口径，
+ * 单媒体条目不必逐条手写。
+ */
+function seedMedia(asset: SeedAsset): MediaItem[] {
+  if (asset.mediaList && asset.mediaList.length > 0) return asset.mediaList;
+  if (!asset.storageUri && !asset.thumbnail) return [];
+  return [{
+    title: '',
+    storageUri: asset.storageUri,
+    kind: undefined,
+    mime: asset.mime,
+    bytes: asset.bytes,
+    thumbnail: asset.thumbnail
+  }];
+}
+
+const ASSETS: SeedAsset[] = [
     {
       id: 'seed-1001',
       title: '品牌主视觉 2026',
@@ -26,6 +45,12 @@ export const SEED: Catalog = {
       version: 'v3',
       approval: 'approved',
       downloadTtl: 300,
+      // 多媒体示例（media_items 重复组）：同一资源关联多张图片，详情页可切换预览
+      mediaList: [
+        { title: '主视觉 KV（横版）', storageUri: 'media://image/brand-kv-2026.jpg', kind: 'image', mime: 'image/jpeg', bytes: 2_480_000 },
+        { title: '主视觉 KV（竖版延展）', storageUri: 'media://image/brand-kv-2026-portrait.jpg', kind: 'image', mime: 'image/jpeg', bytes: 3_120_000 },
+        { title: '发布会现场图', storageUri: 'media://image/keynote-still-01.jpg', kind: 'image', mime: 'image/jpeg', bytes: 1_960_000 }
+      ],
       updatedAt: '2026-09-28T02:10:00Z'
     },
     {
@@ -51,6 +76,12 @@ export const SEED: Catalog = {
       version: 'v1',
       approval: 'approved',
       downloadTtl: 300,
+      // 跨类型多媒体示例：成片 + 配发幻灯片 + 现场图，切换预览时播放器随之切换
+      mediaList: [
+        { title: '主旨演讲成片', storageUri: 'media://video/keynote-2026.mp4', kind: 'video', mime: 'video/mp4', bytes: 860_000_000 },
+        { title: '演讲幻灯片（PDF）', storageUri: 'media://document/keynote-slides-2026.pdf', kind: 'document', mime: 'application/pdf', bytes: 18_400_000 },
+        { title: '现场照片', storageUri: 'media://image/keynote-still-01.jpg', kind: 'image', mime: 'image/jpeg', bytes: 1_960_000 }
+      ],
       updatedAt: '2026-09-18T08:00:00Z'
     },
     {
@@ -99,6 +130,11 @@ export const SEED: Catalog = {
       version: 'v4',
       approval: 'approved',
       downloadTtl: 600,
+      // 文档 + 附图示例：手册正文与接线图分开关联
+      mediaList: [
+        { title: '安装手册（PDF）', storageUri: 'media://document/install-manual.pdf', kind: 'document', mime: 'application/pdf', bytes: 4_200_000 },
+        { title: '接线示意图', storageUri: 'media://image/wiring-diagram.png', kind: 'image', mime: 'image/png', bytes: 640_000 }
+      ],
       updatedAt: '2026-09-30T11:40:00Z'
     },
     {
@@ -199,7 +235,11 @@ export const SEED: Catalog = {
       downloadTtl: 300,
       updatedAt: '2026-10-04T04:45:00Z'
     }
-  ],
+];
+
+/** 未发布内容时的示例目录。字段名与 models/*.yaml 一致，便于对照录入。 */
+export const SEED: Catalog = {
+  assets: ASSETS.map((asset) => ({ ...asset, mediaList: seedMedia(asset) })),
   versions: [
     {
       id: 'ver-1001-1',

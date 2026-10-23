@@ -3,7 +3,7 @@ import { trackEvent, analyticsRoute } from '../analytics';
 import { downloadContentFile, likeMemberComment, loadContentActions, loadContentComments, loadContentForm, recordContentView, submitContentComment, toggleContentLike, type ContentActions, type ContentComment, type ContentFormNode } from '../api';
 import { AccountBar, toggleFavorite, useMemberStore } from '../account';
 import { approvalBadge, approvalLabel, fileExt, formatBytes, formatDate, formatWhen, kindLabel, licenseLabel } from '../format';
-import { externalUrl, frameOf, mediaAssetId, orientationOf, previewKind } from '../preview';
+import { addressLabel, assetPreviewSrc, externalUrl, frameOf, mediaAssetId, orientationOf, previewKind } from '../preview';
 import type { Asset, Catalog } from '../types';
 import { Page } from '../ui';
 import { KnoxImage } from './KnoxImage';
@@ -26,7 +26,9 @@ export function DetailPage(props: {
   onAdopt: (id: string) => void;
   onToast: (message: string) => void;
 }) {
-  const [tab, setTab] = useState<'versions' | 'meta' | 'comments'>('versions');
+  const [tab, setTab] = useState<'media' | 'meta' | 'versions' | 'comments'>('versions');
+  // 关联媒体（media_items 重复组）的当前预览下标：预览、全屏大图与「媒体列表」页签三处联动
+  const [mediaIndex, setMediaIndex] = useState(0);
   const [showDiff, setShowDiff] = useState(false);
   const [measured, setMeasured] = useState<{ w: number; h: number } | null>(null);
   const asset = props.asset;
@@ -51,7 +53,9 @@ export function DetailPage(props: {
   useEffect(() => {
     setMeasured(null);
     setShowDiff(false);
-    setTab('versions');
+    // 页签顺序：媒体列表 → 元数据 → 版本历史 → 评论；多于一个关联媒体时默认落在「媒体列表」
+    setTab((asset?.mediaList?.length ?? 0) > 1 ? 'media' : 'versions');
+    setMediaIndex(0);
     setActions(null);
     setComments([]);
     setCommentNote('');
@@ -282,12 +286,37 @@ export function DetailPage(props: {
   const portrait = orientation === 'portrait';
   // 文档预览要给足宽度才够清晰（正文小字在窄栏里会糊成一团），故单独打标记走「保底 1000px」版式。
   const isDocument = previewKind(asset.kind) === 'document';
-  const storedId = mediaAssetId(asset.storageUri);
-  const stageId = storedId || (previewKind(asset.kind) === 'image' ? imageAssetIds[0] ?? '' : '');
+  // 关联媒体列表：media_items 重复组归一化而来（api.ts/seed.ts 已兜底），空时按顶层单媒体字段出一行。
+  // 长度大于 1 才显示「媒体列表」页签与切换条 —— 单媒体资源维持原有界面。
+  const mediaList = asset.mediaList.length > 0
+    ? asset.mediaList
+    : [{
+      title: '',
+      storageUri: asset.storageUri,
+      kind: undefined,
+      mime: asset.mime,
+      bytes: asset.bytes,
+      thumbnail: asset.thumbnail
+    }];
+  const activeIndex = Math.min(mediaIndex, mediaList.length - 1);
+  const currentMedia = mediaList[activeIndex];
+  const currentKind = currentMedia.kind ?? asset.kind;
+  const storedId = mediaAssetId(currentMedia.storageUri);
+  const stageId = storedId || (previewKind(currentKind) === 'image' ? imageAssetIds[0] ?? '' : '');
   const extraImages = imageAssetIds.filter((id) => id !== stageId);
   const frame = measured
     ?? ((asset.width ?? 0) > 0 && (asset.height ?? 0) > 0 ? frameOf(asset) : null);
-  const previewAsset = { ...asset, viewCount };
+  // 预览资产：当前媒体覆盖资源级单媒体字段，预览管线（previewTarget/播放/文档/音频）
+  // 无需感知列表本身 —— 切媒体即换 src，各预览器按既有依赖数组自行重载。
+  const previewAsset: Asset = {
+    ...asset,
+    viewCount,
+    kind: currentKind,
+    storageUri: currentMedia.storageUri || asset.storageUri,
+    mime: currentMedia.mime || asset.mime,
+    bytes: currentMedia.bytes || asset.bytes,
+    thumbnail: currentMedia.thumbnail || asset.thumbnail
+  };
   const preview = (
     <PreviewPane
       asset={previewAsset}
@@ -295,12 +324,15 @@ export function DetailPage(props: {
       orientation={orientation}
       onMeasure={(width, height) => setMeasured({ w: width, h: height })}
       imageAssetIds={imageAssetIds}
+      mediaList={mediaList}
+      mediaIndex={activeIndex}
+      onMediaIndex={(next) => setMediaIndex(next)}
       extra={(
         <DetailEngage
           siteId={props.siteId}
           assetId={asset.id}
           mediaId={stageId}
-          external={externalUrl(asset.storageUri)}
+          external={externalUrl(currentMedia.storageUri)}
           actions={actions}
           commentCount={actions?.commentCount ?? commentTotal ?? null}
           favorited={favorited || Boolean(actions?.favorited)}
@@ -351,8 +383,11 @@ export function DetailPage(props: {
           <div className="history-slot" id="detail-history">
             <div className="card">
               <div className="tabs">
-                <button className={`tab ${tab === 'versions' ? 'active' : ''}`} type="button" onClick={() => setTab('versions')}>版本历史 ({versions.length || 1})</button>
+                {mediaList.length > 1 ? (
+                  <button className={`tab ${tab === 'media' ? 'active' : ''}`} type="button" onClick={() => setTab('media')}>媒体列表 ({mediaList.length})</button>
+                ) : null}
                 <button className={`tab ${tab === 'meta' ? 'active' : ''}`} type="button" onClick={() => setTab('meta')}>元数据</button>
+                <button className={`tab ${tab === 'versions' ? 'active' : ''}`} type="button" onClick={() => setTab('versions')}>版本历史 ({versions.length || 1})</button>
                 <button className={`tab ${tab === 'comments' ? 'active' : ''}`} type="button" onClick={() => setTab('comments')}>评论</button>
               </div>
               {tab === 'versions' ? (
@@ -409,11 +444,50 @@ export function DetailPage(props: {
                   ) : null}
                 </>
               ) : null}
+              {tab === 'media' ? (
+                <div className="media-list">
+                  <span className="media-list-hint">共 {mediaList.length} 个关联媒体，点击任意一项切换预览（全屏大图与切换条同步联动）</span>
+                  {mediaList.map((item, index) => {
+                    const kind = item.kind ?? asset.kind;
+                    // 预览图与列表卡片同源：IMAGE 字段（media_thumbnail_url_s）→ 原件引用 → 外链，逐级回退
+                    const src = assetPreviewSrc(props.siteId, {
+                      ...asset,
+                      kind,
+                      storageUri: item.storageUri,
+                      thumbnail: item.thumbnail ?? '',
+                      mediaList
+                    });
+                    const label = item.title || addressLabel(item.storageUri) || `媒体 ${index + 1}`;
+                    return (
+                      <button
+                        key={`${item.storageUri || 'media'}-${index}`}
+                        className={`media-list-item${index === activeIndex ? ' is-on' : ''}`}
+                        type="button"
+                        onClick={() => setMediaIndex(index)}
+                      >
+                        <span className="media-item-thumb">
+                          {src
+                            ? <img src={src} alt="" loading="lazy" />
+                            : <span className="media-item-thumb-empty">{kindLabel(kind)}</span>}
+                        </span>
+                        <span className="media-item-body">
+                          <span className="media-item-title">{label}</span>
+                          <span className="media-item-sub">
+                            {kindLabel(kind)}{item.mime ? ` · ${item.mime}` : ''}{item.bytes ? ` · ${formatBytes(item.bytes)}` : ''}
+                          </span>
+                        </span>
+                        <span className="media-item-no">{index + 1}</span>
+                        {index === activeIndex ? <span className="media-item-on">预览中</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
               {tab === 'meta' ? (
                 <div className="card-pad">
                   <div className="kv"><span className="kv-k">资源编码</span><span className="kv-v num">{asset.code}</span></div>
                   <div className="kv"><span className="kv-k">摘要</span><span className="kv-v">{asset.summary}</span></div>
-                  <div className="kv"><span className="kv-k">存储地址</span><span className="kv-v">{asset.storageUri || '—'}</span></div>
+                  <div className="kv"><span className="kv-k">存储地址</span><span className="kv-v">{currentMedia.storageUri || asset.storageUri || '—'}</span></div>
                   <div className="kv"><span className="kv-k">栏目</span><span className="kv-v">{asset.group || '—'}</span></div>
                   <div className="kv"><span className="kv-k">下载有效期</span><span className="kv-v num">{asset.downloadTtl || 300} 秒</span></div>
                   {asset.body ? <div className="kv"><span className="kv-k">正文</span><span className="kv-v">{asset.body}</span></div> : null}
@@ -1137,6 +1211,8 @@ function withLikeCount(items: ContentComment[], id: string, likeCount: number): 
 function imageFieldCodes(nodes: ContentFormNode[]): string[] {
   const codes: string[] = [];
   for (const node of nodes) {
+    // 重复组子字段的值在行数组里（挂在组编码下），扁平 fieldValues 取不到，收集也无用
+    if (node.elementType === 'REPEAT_GROUP') continue;
     if (node.field?.fieldType === 'IMAGE' && node.field.code) codes.push(node.field.code);
     if (node.children?.length) codes.push(...imageFieldCodes(node.children));
   }

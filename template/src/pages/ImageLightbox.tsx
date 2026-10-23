@@ -4,6 +4,11 @@ import { createPortal } from 'react-dom';
 export interface LightboxSlide {
   /** 图片地址：/media-thumb 代理（图片回源的就是原件字节）或编辑者保存的外链。 */
   url: string;
+  /**
+   * 该张对应关联媒体列表（media_items）的下标。翻到带此值的张会通知父级切换媒体，
+   * 实现「全屏查看时也能切换媒体」；纯图片字段（无媒体行）的张没有此值，翻过不带动预览。
+   */
+  mediaIndex?: number;
 }
 
 const ZOOM_MIN = 0.2;
@@ -22,11 +27,13 @@ const CLICK_SLOP = 5;
  */
 export function ImageLightbox(props: {
   slides: LightboxSlide[];
-  /** 起始张，默认第 1 张（详情页主图恒为首张）。 */
+  /** 起始张，默认第 1 张（详情页主图恒为首张）；外部切媒体时此值变化即跟随跳张。 */
   index?: number;
   /** 图片替代文本（资源标题）：读屏与可访问树都靠它，空 alt 会被当成装饰图隐藏。 */
   alt?: string;
   onClose: () => void;
+  /** 张序变化（键盘/按钮翻页与受控跟随）：父级据此同步媒体列表下标。 */
+  onIndexChange?: (index: number) => void;
 }) {
   const total = props.slides.length;
   const [index, setIndex] = useState(() => Math.min(Math.max(props.index ?? 0, 0), Math.max(total - 1, 0)));
@@ -44,8 +51,25 @@ export function ImageLightbox(props: {
   // 键盘回调只挂一次，用 ref 转发，免得父级每次渲染都重挂监听。
   const closeRef = useRef(props.onClose);
   closeRef.current = props.onClose;
+  const changeRef = useRef(props.onIndexChange);
+  changeRef.current = props.onIndexChange;
 
   const slide = props.slides[index] ?? props.slides[0];
+
+  // 翻到哪张就通知父级切媒体；挂载时以起始张初始化，不重复播报初始值
+  // （父级回调自带「与当前媒体相同则跳过」的判断，回灌也不会形成环）。
+  const lastNotified = useRef(index);
+  useEffect(() => {
+    if (lastNotified.current === index) return;
+    lastNotified.current = index;
+    changeRef.current?.(index);
+  }, [index]);
+
+  // 受控跟随：详情页切媒体（切换条 / 媒体列表页签）时大图跳到该媒体对应张。
+  useEffect(() => {
+    if (props.index == null) return;
+    setIndex(Math.min(Math.max(props.index, 0), Math.max(total - 1, 0)));
+  }, [props.index, total]);
 
   // 换一张就回到初始姿态：上一张 300% 的放大会原样带过来，用户会以为「下一张图是糊的」。
   // 只重置**图片的姿态**（缩放/旋转/平移），不动「拖拽」这个工具开关 ——

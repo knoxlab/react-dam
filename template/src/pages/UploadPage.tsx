@@ -3,10 +3,13 @@ import { AccountBar } from '../account';
 import {
   createMemberUpload,
   loadContentForm,
+  loadCurrentMember,
+  loadMediaLibrary,
   uploadMemberFile,
   type ContentForm,
   type ContentFormField,
-  type ContentFormNode
+  type ContentFormNode,
+  type LibraryMediaRow
 } from '../api';
 import { formatBytes } from '../format';
 import { externalUrl, mediaAssetId } from '../preview';
@@ -27,7 +30,40 @@ interface QueueItem {
   assetId: string;
 }
 
+/** 关联媒体行（表单态）：已上传文件与媒体库选择共用，提交时整体写入 media_items 重复组。 */
+interface LinkedMedia {
+  key: string;
+  /** 资产 id（UUID）或外部 http(s) 地址 —— MEDIA_REF 接受的形态 */
+  storageUri: string;
+  title: string;
+  kind: AssetKind;
+  mime: string;
+  bytes: number;
+  /** 图片类：预览图资产编号（IMAGE 字段约定值）；其余类型留空由服务端按类型回退 */
+  thumb: string;
+  summary: string;
+  tags: string;
+  source: 'upload' | 'library';
+}
+
 const VIDEO_EXT = ['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v'];
+const MEDIA_KINDS: AssetKind[] = ['image', 'video', 'audio', 'document', 'other'];
+
+/** 上传完成的队列项 → 关联媒体行（已传到 Knox-Media 的资产作为一条 media_items 行）。 */
+function linkedFromUpload(item: QueueItem): LinkedMedia {
+  return {
+    key: `upload-${item.assetId}`,
+    storageUri: item.assetId,
+    title: item.name,
+    kind: item.kind,
+    mime: item.mime,
+    bytes: item.size,
+    thumb: item.kind === 'image' ? item.assetId : '',
+    summary: '',
+    tags: '',
+    source: 'upload'
+  };
+}
 
 export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; onToast: (message: string) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -37,16 +73,18 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
   const [folderId, setFolderId] = useState('');
   const [form, setForm] = useState<ContentForm | null>(null);
   const [formError, setFormError] = useState('');
-  const [values, setValues] = useState<Record<string, Record<string, string>>>({});
-  const [activeVideo, setActiveVideo] = useState('');
+  // 聚合表单：多个上传文件与媒体库选择共用一份数字资源表单（多文件 → 一个资源的多个关联媒体）
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [linked, setLinked] = useState<LinkedMedia[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [memberGroups, setMemberGroups] = useState<string[]>([]);
+  const seeded = useRef(false);
   const allowed = props.folders.some((folder) => folder.id === folderId) ? folderId : '';
   const folder = props.folders.find((item) => item.id === allowed);
   const done = useMemo(() => items.filter((item) => item.status === 'done'), [items]);
-  const videos = useMemo(() => done.filter((item) => item.kind === 'video'), [done]);
-  const others = useMemo(() => done.filter((item) => item.kind !== 'video'), [done]);
   const fields = useMemo(() => (form ? collectFields(form.nodes) : []), [form]);
 
   useEffect(() => {
@@ -62,7 +100,11 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
   }, []);
 
   useEffect(() => {
-    if (done.length === 0) setShowForm(false);
+    if (done.length === 0) {
+      setShowForm(false);
+      setLinked([]);
+      seeded.current = false;
+    }
   }, [done.length]);
 
   useEffect(() => {
@@ -84,25 +126,62 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
     };
   }, [props.siteId, done.length, showForm]);
 
+  // 表单初始值：以第一个上传文件种一次（用户已输入的值优先）
+  useEffect(() => {
+    if (!form || seeded.current || done.length === 0) return;
+    seeded.current = true;
+    const first = done[0];
+    setValues((current) => ({ ...initialValues(fields, first, folder?.title ?? ''), ...current }));
+  }, [form, done, fields, folder?.title]);
+
+  // 上传完成的文件自动成为关联媒体行（多文件 → 一个资源的多个关联媒体）
+  useEffect(() => {
+    if (done.length === 0) return;
+    setLinked((current) => {
+      const have = new Set(current.map((row) => row.storageUri));
+      const added = done
+        .filter((item) => item.assetId && !have.has(item.assetId))
+        .map((item) => linkedFromUpload(item));
+      return added.length ? [...current, ...added] : current;
+    });
+  }, [done]);
+
   useEffect(() => {
     if (!form) return;
     const folderTitle = folder?.title ?? '';
-    setValues((current) => {
-      let changed = false;
-      const next = { ...current };
-      for (const item of done) {
-        if (next[item.id]) continue;
-        next[item.id] = initialValues(fields, item, folderTitle);
-        changed = true;
-      }
-      return changed ? next : current;
-    });
-  }, [form, done, fields, folder?.title]);
+    if (folderTitle && !values.resource_group_s) {
+      setValues((current) => (current.resource_group_s ? current : { ...current, resource_group_s: folderTitle }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, folder?.title]);
 
+  // 当前会员组（如「市场部」）：所属部门的自动填写来源，仅取一次。
+  // access-member / access-vip 是通用会员等级组、不表达部门，优先取部门类分组
+  // （如站点上绑定的 dam-mkt「市场部」），全部为通用组时才回退首个组名。
   useEffect(() => {
-    if (videos.length < 2) return;
-    if (!videos.some((item) => item.id === activeVideo)) setActiveVideo(videos[0].id);
-  }, [videos, activeVideo]);
+    let cancelled = false;
+    void loadCurrentMember()
+      .then((me) => {
+        if (cancelled || !me) return;
+        const names = me.groups.map((name, index) => ({ name, code: me.groupCodes[index] ?? '' }));
+        const departments = names.filter((entry) => entry.name && !entry.code.startsWith('access-'));
+        setMemberGroups((departments.length > 0 ? departments : names)
+          .map((entry) => entry.name.trim())
+          .filter((name) => name.length > 0));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 所属部门自动填写：表单打开后若仍为空，取当前会员的首个会员组（不覆盖用户输入）
+  useEffect(() => {
+    if (!form || !showForm || memberGroups.length === 0) return;
+    const department = memberGroups[0];
+    setValues((current) => (current.department_s?.trim() ? current : { ...current, department_s: department }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, showForm, memberGroups]);
 
   function patchItem(id: string, partial: Partial<QueueItem>) {
     if (dropped.current.has(id)) return;
@@ -168,30 +247,76 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
     dropped.current.add(id);
     jobs.current.get(id)?.abort();
     jobs.current.delete(id);
+    const removed = items.find((item) => item.id === id);
     setItems((current) => current.filter((row) => row.id !== id));
     setValues((current) => {
       const next = { ...current };
       delete next[id];
       return next;
     });
+    if (removed?.assetId) {
+      const assetId = removed.assetId;
+      setLinked((current) => current.filter((row) => row.source !== 'upload' || row.storageUri !== assetId));
+    }
   }
 
   function clearFinished() {
-    const removed = items.filter((item) => item.status === 'done').map((item) => item.id);
-    for (const id of removed) dropped.current.add(id);
+    const removed = items.filter((item) => item.status === 'done');
+    for (const item of removed) dropped.current.add(item.id);
+    const removedAssets = new Set(removed.map((item) => item.assetId).filter(Boolean));
     setItems((current) => current.filter((item) => item.status !== 'done'));
     setValues((current) => {
       const next = { ...current };
-      for (const id of removed) delete next[id];
+      for (const item of removed) delete next[item.id];
       return next;
     });
+    setLinked((current) => current.filter((row) => row.source !== 'upload' || !removedAssets.has(row.storageUri)));
   }
 
-  function changeValue(itemId: string, code: string, value: string) {
-    setValues((current) => ({
-      ...current,
-      [itemId]: { ...(current[itemId] ?? {}), [code]: value }
-    }));
+  function changeValue(code: string, value: string) {
+    setValues((current) => ({ ...current, [code]: value }));
+  }
+
+  /** 媒体库选择：加一行关联媒体，并对仍为空的表单字段自动填写（标题/编码/类型/摘要等）。 */
+  function pickFromLibrary(row: LibraryMediaRow) {
+    const kind: AssetKind = MEDIA_KINDS.includes(row.kind as AssetKind) ? row.kind as AssetKind : 'other';
+    const title = row.filename || row.title || '未命名媒体';
+    setLinked((current) => current.some((item) => item.storageUri === row.id)
+      ? current
+      : [...current, {
+        key: `library-${row.id}`,
+        storageUri: row.id,
+        title,
+        kind,
+        mime: row.mimeType,
+        bytes: row.fileSize,
+        thumb: kind === 'image' ? row.id : '',
+        summary: row.summary || row.title || '',
+        tags: row.tags || '',
+        source: 'library'
+      }]);
+    autofillFromMedia({ title, kind, mime: row.mimeType, bytes: row.fileSize, summary: row.summary || row.title || '', tags: row.tags || '', thumb: kind === 'image' ? row.id : '' });
+    props.onToast(`已添加关联媒体「${title}」，空白字段已自动填写`);
+  }
+
+  /** 仅填写仍为空的字段：不覆盖用户已输入的内容。 */
+  function autofillFromMedia(media: { title: string; kind: string; mime: string; bytes: number; summary: string; tags: string; thumb: string }) {
+    setValues((current) => {
+      const next = { ...current };
+      const base = media.title.replace(/\.[^.]+$/, '') || media.title;
+      const fill = (code: string, value: string) => {
+        if (value && !(next[code] ?? '').trim()) next[code] = value;
+      };
+      fill('asset_code_s', base);
+      fill('asset_kind_s', media.kind);
+      fill('summary_t', media.summary);
+      fill('body_t', media.summary);
+      fill('mime_type_s', media.mime);
+      fill('file_size_i', media.bytes ? String(media.bytes) : '');
+      fill('thumbnail_url_s', media.thumb);
+      fill('ai_tags_ss', media.tags);
+      return next;
+    });
   }
 
   function cancelForm() {
@@ -202,13 +327,10 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
 
   function validateForm(): string {
     if (!form) return formError || '数字资源表单布局尚未就绪';
-    for (const item of done) {
-      const row = values[item.id] ?? {};
-      for (const field of fields) {
-        if (!field.required || field.fieldType === 'BOOLEAN') continue;
-        if (!(row[field.code] ?? '').trim()) {
-          return `请填写「${item.name}」的${field.name}`;
-        }
+    for (const field of fields) {
+      if (!field.required || field.fieldType === 'BOOLEAN') continue;
+      if (!(values[field.code] ?? '').trim()) {
+        return `请填写${field.name}`;
       }
     }
     return '';
@@ -224,23 +346,30 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
     }
     setSubmitting(true);
     setSubmitError('');
-    const createdIds: string[] = [];
     try {
-      for (const item of done) {
-        const row = values[item.id] ?? {};
-        const title = (row.asset_code_s || item.name.replace(/\.[^.]+$/, '') || item.name).trim();
-        await createMemberUpload(props.siteId, item.folderId, title, row);
-        createdIds.push(item.id);
+      const firstTitle = linked[0]?.title ?? '';
+      const title = (values.asset_code_s || firstTitle.replace(/\.[^.]+$/, '') || firstTitle || '未命名资源').trim();
+      const payload: Record<string, string> = { ...values };
+      if (linked.length > 0) {
+        // 关联媒体整体写入 media_items 重复组（后端把 JSON 数组字符串解析为行数组）
+        payload.media_items = JSON.stringify(linked.map((row) => ({
+          media_storage_uri_s: row.storageUri,
+          media_title_s: row.title,
+          media_kind_s: row.kind,
+          ...(row.mime ? { media_mime_type_s: row.mime } : {}),
+          ...(row.bytes ? { media_file_size_i: String(row.bytes) } : {}),
+          ...(row.thumb ? { media_thumbnail_url_s: row.thumb } : {}),
+          ...(row.summary ? { media_summary_t: row.summary } : {})
+        })));
       }
-      for (const id of createdIds) dropped.current.add(id);
-      setItems((current) => current.filter((item) => !createdIds.includes(item.id)));
-      setValues((current) => {
-        const next = { ...current };
-        for (const id of createdIds) delete next[id];
-        return next;
-      });
+      await createMemberUpload(props.siteId, allowed, title, payload);
+      for (const item of done) dropped.current.add(item.id);
+      setItems((current) => current.filter((item) => item.status !== 'done'));
+      setValues({});
+      setLinked([]);
+      seeded.current = false;
       setShowForm(false);
-      props.onToast(createdIds.length === 1 ? '已提交审核，可在「我的上传」查看' : `已提交 ${createdIds.length} 条资源进入审核`);
+      props.onToast('已提交审核，可在「我的上传」查看');
     } catch (reason: unknown) {
       setSubmitError(reason instanceof Error ? reason.message : '提交失败');
       props.onToast(reason instanceof Error ? reason.message : '提交失败');
@@ -248,8 +377,6 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
       setSubmitting(false);
     }
   }
-
-  const active = videos.find((item) => item.id === activeVideo) ?? videos[0];
 
   if (showForm && done.length > 0) {
     return (
@@ -268,62 +395,66 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
           <div className="page-head">
             <h1 className="page-title">{form?.name || '填写数字资源'}</h1>
             <p className="page-sub">
-              共 {done.length} 个已上传文件 · 提交后自动提交审核（可在「我的上传」查看进度）
+              共 {done.length} 个已上传文件 · {linked.length} 个关联媒体 · 提交后自动提交审核（可在「我的上传」查看进度）
               {folder ? ` · 栏目「${folder.title}」` : ''}
             </p>
           </div>
           <div className="card">
-            {videos.length > 1 ? (
-              <div className="tabs file-tabs" role="tablist" aria-label="视频">
-                {videos.map((item) => (
-                  <button
-                    key={item.id}
-                    className={`tab ${item.id === active?.id ? 'active' : ''}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={item.id === active?.id}
-                    title={item.name}
-                    onClick={() => setActiveVideo(item.id)}
-                  >
-                    <span>{item.name}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
             {formError ? <div className="card-note">{formError}</div> : null}
             {submitError ? <div className="card-note" style={{ color: 'var(--danger-text)' }}>{submitError}</div> : null}
             {!form && !formError ? <div className="card-note">正在读取数字资源表单…</div> : null}
-            {form && videos.length > 1 && active ? (
-              <AssetForm
-                item={active}
-                siteId={props.siteId}
-                nodes={form.nodes}
-                values={values[active.id] ?? {}}
-                onChange={(code, value) => changeValue(active.id, code, value)}
-              />
+            {form ? (
+              <FormNodes nodes={form.nodes} values={values} siteId={props.siteId} folderId={allowed} onChange={changeValue} />
             ) : null}
-            {form && videos.length <= 1 ? done.map((item) => (
-              <AssetForm
-                key={item.id}
-                item={item}
-                siteId={props.siteId}
-                nodes={form.nodes}
-                values={values[item.id] ?? {}}
-                showName={done.length > 1}
-                onChange={(code, value) => changeValue(item.id, code, value)}
+            {/* 关联媒体：本次上传的多个文件与从媒体库选择的已有媒体，整体写入 media_items 重复组 */}
+            <section className="linked-media">
+              <div className="linked-media-head">
+                <h3>关联媒体（{linked.length}）</h3>
+                <span className="linked-media-sub">多个媒体将作为同一资源的关联媒体；从媒体库选择媒体后，空白字段会自动填写</span>
+                <span className="linked-media-actions">
+                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => setPickerOpen(true)}>从媒体库选择</button>
+                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => inputRef.current?.click()}>上传新媒体</button>
+                </span>
+              </div>
+              <input
+                ref={inputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(event) => {
+                  addFiles(event.target.files);
+                  event.target.value = '';
+                }}
               />
-            )) : null}
-            {form && videos.length > 1 ? others.map((item) => (
-              <AssetForm
-                key={item.id}
-                item={item}
-                siteId={props.siteId}
-                nodes={form.nodes}
-                values={values[item.id] ?? {}}
-                showName
-                onChange={(code, value) => changeValue(item.id, code, value)}
-              />
-            )) : null}
+              {linked.length === 0 ? (
+                <div className="card-note">还没有关联媒体。本次上传的文件会自动加入；也可从媒体库选择已有媒体。</div>
+              ) : (
+                <div className="linked-media-list">
+                  {linked.map((row, index) => (
+                    <div className="linked-media-row" key={row.key}>
+                      <span className="media-item-thumb">
+                        {row.thumb
+                          ? <KnoxImage siteId={props.siteId} assetId={row.thumb} alt="" />
+                          : <span className="media-item-thumb-empty">{kindLabel(row.kind)}</span>}
+                      </span>
+                      <span className="media-item-body">
+                        <span className="media-item-title">{row.title || `媒体 ${index + 1}`}</span>
+                        <span className="media-item-sub">
+                          {kindLabel(row.kind)}{row.mime ? ` · ${row.mime}` : ''}{row.bytes ? ` · ${formatBytes(row.bytes)}` : ''}{row.source === 'library' ? ' · 媒体库' : ' · 本次上传'}
+                        </span>
+                      </span>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        type="button"
+                        onClick={() => setLinked((current) => current.filter((item) => item.key !== row.key))}
+                      >
+                        移除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
             <div className="form-actions">
               <button className="btn btn-ghost" type="button" disabled={submitting} onClick={cancelForm}>取消</button>
               <button className="btn btn-primary" type="button" disabled={submitting || !form} onClick={() => void submitForm()}>
@@ -331,6 +462,9 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
               </button>
             </div>
           </div>
+          {pickerOpen ? (
+            <MediaPickerModal siteId={props.siteId} onClose={() => setPickerOpen(false)} onPick={pickFromLibrary} />
+          ) : null}
         </div>
       </Page>
     );
@@ -431,6 +565,8 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
               jobs.current.clear();
               setItems([]);
               setValues({});
+              setLinked([]);
+              seeded.current = false;
             }}>清空</button>
           </div>
           {items.length === 0 ? (
@@ -462,28 +598,6 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
   );
 }
 
-function AssetForm(props: {
-  item: QueueItem;
-  siteId: string;
-  nodes: ContentFormNode[];
-  values: Record<string, string>;
-  showName?: boolean;
-  onChange: (code: string, value: string) => void;
-}) {
-  return (
-    <div className="asset-form">
-      {props.showName ? <h3>{props.item.name}</h3> : null}
-      <FormNodes
-        nodes={props.nodes}
-        values={props.values}
-        siteId={props.siteId}
-        folderId={props.item.folderId}
-        onChange={props.onChange}
-      />
-    </div>
-  );
-}
-
 function FormNodes(props: {
   nodes: ContentFormNode[];
   values: Record<string, string>;
@@ -495,6 +609,9 @@ function FormNodes(props: {
   return (
     <>
       {props.nodes.map((node, index) => {
+        // 重复组（media_items）由「关联媒体」编辑器负责（行 = 上传文件/媒体库选择），
+        // 表单平铺渲染其子字段没有意义 —— 整棵子树跳过。
+        if (node.elementType === 'REPEAT_GROUP') return null;
         if (node.elementType === 'TAB') {
           const pages = node.children ?? [];
           const selected = tabs[index] ?? 0;
@@ -757,6 +874,9 @@ function MediaRefInput(props: {
 function collectFields(nodes: ContentFormNode[]): ContentFormField[] {
   const fields: ContentFormField[] = [];
   for (const node of nodes) {
+    // 重复组（media_items）的子字段按行存储（值挂在组编码的行数组里），上传表单是平铺
+    // 单值录入，写不进行组 —— 整棵子树跳过，多媒体在管理端内容表单逐行维护。
+    if (node.elementType === 'REPEAT_GROUP') continue;
     if (node.field) fields.push(node.field);
     if (node.children?.length) fields.push(...collectFields(node.children));
   }
@@ -788,4 +908,80 @@ function fileKind(file: File): AssetKind {
   if (ext === 'pdf' || file.type === 'application/pdf') return 'document';
   if (['txt', 'md'].includes(ext) || file.type.startsWith('text/')) return 'other';
   return 'document';
+}
+
+const KIND_LABELS: Record<string, string> = { image: '图片', video: '视频', audio: '音频', document: '文档', other: '其他' };
+
+function kindLabel(kind: string) {
+  return KIND_LABELS[kind] ?? '媒体';
+}
+
+/**
+ * 媒体库选择弹窗：列本站 ACTIVE 媒体资产（登录会员），点击「添加」即作为一条关联媒体行，
+ * 上传中心随即将资产元数据（标题/编码/类型/摘要/MIME/大小/预览图/AI 标签）填入仍为空的表单字段。
+ */
+function MediaPickerModal(props: { siteId: string; onClose: () => void; onPick: (row: LibraryMediaRow) => void }) {
+  const [rows, setRows] = useState<LibraryMediaRow[] | null>(null);
+  const [error, setError] = useState('');
+  const [kind, setKind] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    setRows(null);
+    setError('');
+    loadMediaLibrary(props.siteId, kind || undefined)
+      .then((next) => {
+        if (!cancelled) setRows(next);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setRows([]);
+          setError(reason instanceof Error ? reason.message : '媒体库加载失败');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.siteId, kind]);
+  return (
+    <div className="modal-mask" onClick={props.onClose} role="presentation">
+      <div className="modal-card media-picker" role="dialog" aria-label="从媒体库选择" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-head">
+          <span className="modal-title">从媒体库选择</span>
+          <select className="picker-kind" value={kind} onChange={(event) => setKind(event.target.value)} aria-label="按类型筛选">
+            <option value="">全部类型</option>
+            <option value="image">图片</option>
+            <option value="video">视频</option>
+            <option value="audio">音频</option>
+            <option value="document">文档</option>
+          </select>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={props.onClose}>关闭</button>
+        </div>
+        {error ? <div className="card-note" style={{ color: 'var(--danger-text)' }}>{error}</div> : null}
+        {!rows ? (
+          <div className="card-note">正在加载媒体库…</div>
+        ) : rows.length === 0 ? (
+          <div className="card-note">媒体库里还没有可用媒体。先在上传中心上传文件，或让管理员在媒体库登记。</div>
+        ) : (
+          <div className="picker-list">
+            {rows.map((row) => (
+              <button className="picker-row" key={row.id} type="button" onClick={() => props.onPick(row)}>
+                <span className="media-item-thumb">
+                  {row.kind === 'image'
+                    ? <KnoxImage siteId={props.siteId} assetId={row.id} alt="" />
+                    : <span className="media-item-thumb-empty">{kindLabel(row.kind)}</span>}
+                </span>
+                <span className="media-item-body">
+                  <span className="media-item-title">{row.title || row.filename}</span>
+                  <span className="media-item-sub">
+                    {kindLabel(row.kind)}{row.mimeType ? ` · ${row.mimeType}` : ''}{row.fileSize ? ` · ${formatBytes(row.fileSize)}` : ''}{row.createdAt ? ` · ${row.createdAt.slice(0, 10)}` : ''}
+                  </span>
+                </span>
+                <span className="picker-add">添加</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }

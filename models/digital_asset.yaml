@@ -55,27 +55,68 @@ fields:
     groupName: 文件
     sortable: true
     helpText: 单位为字节。
-  - code: storage_uri_s
-    name: 存储地址
-    fieldType: MEDIA_REF
-    groupName: 文件
-    helpText: 指向 media_* 内容或对象存储键，不在前台直接暴露无鉴权原件。
-    fieldConfig:
-      allowedKinds:
-        - image
-        - video
-        - audio
-        - document
-      allowedContentTypes:
-        - media_image
-        - media_video
-        - media_audio
-        - media_document
   - code: thumbnail_url_s
     name: 预览图
     fieldType: IMAGE
     groupName: 文件
     helpText: 资源列表卡片预览图层读取此字段（IMAGE：存媒体资产编号，编辑时可本地重新上传/更换）。未显式上传时，上传登记会自动从 Knox-Media 同步预览资产（图片缩略/视频海报截帧/文档封面）；留空时前台按资源类型回退图标。
+  # 媒体引用采用重复组：一个资源可关联多个媒体（图片/视频/音频/文档等）。
+  # 预览、全屏查看与详情页「媒体列表」页签按行切换；每行字段码带 media_ 前缀，
+  # 与上方顶层兼容字段（storage_uri_s 等，历史单媒体数据与会员上传仍写这里）不撞码。
+  - code: media_items
+    name: 关联媒体
+    fieldType: REPEAT_GROUP
+    groupName: 文件
+    helpText: 逐行添加该资源关联的媒体；预览与全屏查看时可切换，详情页「媒体列表」页签可点击跳转（仅一个媒体时该页签不显示）。
+    fieldConfig:
+      minItems: 0
+      maxItems: 50
+    fields:
+      - code: media_storage_uri_s
+        name: 媒体原件
+        fieldType: MEDIA_REF
+        helpText: 指向 media_* 内容或对象存储键，不在前台直接暴露无鉴权原件。
+        fieldConfig:
+          allowedKinds:
+            - image
+            - video
+            - audio
+            - document
+          allowedContentTypes:
+            - media_image
+            - media_video
+            - media_audio
+            - media_document
+      - code: media_title_s
+        name: 媒体标题
+        fieldType: STRING
+        helpText: 列表与切换条上的显示名，留空时前台回退资源标题/文件名。
+      - code: media_kind_s
+        name: 媒体类型
+        fieldType: ENUM
+        fieldConfig:
+          options:
+            - value: image
+              label: 图片
+            - value: video
+              label: 视频
+            - value: audio
+              label: 音频
+            - value: document
+              label: 文档
+            - value: other
+              label: 其他
+      - code: media_mime_type_s
+        name: MIME 类型
+        fieldType: STRING
+      - code: media_file_size_i
+        name: 文件大小
+        fieldType: INTEGER
+        helpText: 单位为字节。
+      - code: media_thumbnail_url_s
+        name: 媒体预览图
+        fieldType: IMAGE
+        helpText: 媒体预览图（IMAGE：存媒体资产编号）；留空时按媒体类型从原件回退。
   - code: tags_ss
     name: 人工标签
     fieldType: TAG
@@ -155,3 +196,28 @@ fields:
     groupName: 分发
     defaultValue: "300"
     helpText: 单位为秒，对应签名下载链接的 TTL。
+# 设计画布布局：两个页签 —— 1. 关联媒体；2. 元数据（导入时生成 TAB 结构，导出时往返保真）。
+layout:
+  tabs:
+    - title: 关联媒体
+      fields:
+        - media_items
+    - title: 元数据
+      fields:
+        - asset_code_s
+        - asset_kind_s
+        - summary_t
+        - body_t
+        - mime_type_s
+        - file_size_i
+        - thumbnail_url_s
+        - tags_ss
+        - ai_tags_ss
+        - copyright_owner_s
+        - license_s
+        - copyright_until_dt
+        - department_s
+        - resource_group_s
+        - version_label_s
+        - approval_status_s
+        - download_ttl_i

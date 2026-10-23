@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import type { Asset } from '../types';
+import type { Asset, MediaItem } from '../types';
+import { kindLabel } from '../format';
 import {
+  addressLabel,
   frameOf,
   knoxPlayerUrl,
   loadKnoxPlayUrl,
@@ -25,10 +27,24 @@ export function PreviewPane(props: {
   siteId: string;
   orientation: Orientation;
   imageAssetIds?: string[];
+  /** 关联媒体（media_items 重复组，含历史单媒体回退行）：多于一个时渲染切换条与图片悬停箭头。 */
+  mediaList?: MediaItem[];
+  /** 当前媒体下标（受控，来自详情页）。 */
+  mediaIndex?: number;
+  /** 切换到指定媒体：切换条、图片箭头与大图翻页共用的唯一入口。 */
+  onMediaIndex?: (index: number) => void;
   onMeasure: (width: number, height: number) => void;
   extra?: ReactNode;
 }) {
   const kind = previewKind(props.asset.kind);
+  const mediaItems = props.mediaList ?? [];
+  const mediaCount = mediaItems.length;
+  const mediaAt = mediaCount > 0 ? Math.min(Math.max(props.mediaIndex ?? 0, 0), mediaCount - 1) : 0;
+  /** 图片悬停箭头的环绕切换：到头回卷，保证任何下标都能继续翻。 */
+  const stepMedia = (delta: number) => {
+    if (mediaCount < 2 || !props.onMediaIndex) return;
+    props.onMediaIndex((((mediaAt + delta) % mediaCount) + mediaCount) % mediaCount);
+  };
   const [src, setSrc] = useState(() => initialSrc(props.asset));
   const [loadError, setLoadError] = useState('');
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
@@ -206,9 +222,11 @@ export function PreviewPane(props: {
   const mediaId = previewTarget(props.asset).assetId;
   const docFallbackSrc = mediaId ? mediaPreviewUrl(props.siteId, mediaId) : '';
 
-  // 大图查看层的可切集合：当前主图在首位，其后是内容模型里的其余图片 ——
-  // 顺序与详情页侧栏「图片」卡片一致，前后翻图时才不会与页面上看到的顺序对不上。
-  const lightboxSlides = kind === 'image' ? imageSlides(props.asset, props.siteId, props.imageAssetIds) : [];
+  // 大图查看层的可切集合：图片媒体逐张在前（带 mediaIndex 指回下标，翻页即切媒体），
+  // 其后接内容模型里的其余图片字段 —— 顺序与详情页侧栏「图片」卡片一致。
+  const lightboxSlides = kind === 'image' ? imageSlides(props.asset, props.siteId, props.imageAssetIds, mediaItems) : [];
+  // 打开时定位到当前媒体对应的张；当前媒体无可解析的图片（占位/非图片行）时落回首张
+  const lightboxStart = Math.max(0, lightboxSlides.findIndex((slide) => slide.mediaIndex === mediaAt));
   const canEnlarge = Boolean(src) && !loadError && lightboxSlides.length > 0;
 
   return (
@@ -233,6 +251,18 @@ export function PreviewPane(props: {
             props.onMeasure(width, height);
           }}
         />
+        {/* 悬停箭头：鼠标移入预览舞台即在左右两侧浮现，点击环绕切换关联媒体。
+            图片/视频/音频/文档预览都支持切换 —— 仅在多于一个媒体时出现（单媒体维持原界面）。 */}
+        {mediaCount > 1 ? (
+          <>
+            <button className="preview-nav prev" type="button" aria-label="上一个媒体" title="上一个媒体" onClick={() => stepMedia(-1)}>
+              <IconNavLeft />
+            </button>
+            <button className="preview-nav next" type="button" aria-label="下一个媒体" title="下一个媒体" onClick={() => stepMedia(1)}>
+              <IconNavRight />
+            </button>
+          </>
+        ) : null}
         {canEnlarge ? (
           <button type="button" className="view-large" title="点击查看大图" onClick={() => setLightbox(true)}>
             <IconSearch />
@@ -240,6 +270,29 @@ export function PreviewPane(props: {
           </button>
         ) : null}
       </div>
+      {/* 媒体切换条：非图片类型（视频/音频/文档）也能切换媒体预览；点击即换预览器 */}
+      {mediaCount > 1 ? (
+        <div className="media-strip" role="group" aria-label="关联媒体切换">
+          {mediaItems.map((item, index) => {
+            const mediaKind = item.kind ?? props.asset.kind;
+            const label = item.title || addressLabel(item.storageUri) || `媒体 ${index + 1}`;
+            return (
+              <button
+                key={`${item.storageUri || 'media'}-${index}`}
+                className={`media-chip${index === mediaAt ? ' is-on' : ''}`}
+                type="button"
+                title={`切换预览：${label}`}
+                aria-pressed={index === mediaAt}
+                onClick={() => props.onMediaIndex?.(index)}
+              >
+                <span className="media-chip-no">{index + 1}</span>
+                <span className="media-chip-kind">{kindLabel(mediaKind)}</span>
+                <span className="media-chip-name">{label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       <div className="preview-bar">
         <span className="preview-facts">
           {kind !== 'audio' && kind !== 'other' && frame ? <span>{frame.w} × {frame.h}</span> : null}
@@ -252,8 +305,14 @@ export function PreviewPane(props: {
       {lightbox && canEnlarge ? (
         <ImageLightbox
           slides={lightboxSlides}
+          index={lightboxStart}
           alt={props.asset.title}
           onClose={() => setLightbox(false)}
+          onIndexChange={(slideIndex) => {
+            // 全屏查看也可切换媒体：翻到带 mediaIndex 的张即切回列表，纯图片字段的张不带动
+            const next = lightboxSlides[slideIndex]?.mediaIndex;
+            if (next != null && next !== mediaAt) props.onMediaIndex?.(next);
+          }}
         />
       ) : null}
     </div>
@@ -263,25 +322,41 @@ export function PreviewPane(props: {
 /**
  * 大图查看层的图片集合。
  *
- * <p>主图取法与上方 `src` 的解析**完全一致**（原件引用 → 内容模型首图 → 预览图字段），
- * 否则「看到的」与「打开后第一张」会是两张不同的图；外链原件没有媒体资产 id，
- * 只能作为单独一项放进列表，其后仍接内容模型里的图片。
+ * <p>第一段是**图片媒体**（关联媒体列表中可解析出图片的行）：每张带 `mediaIndex` 指回
+ * mediaList 下标 —— 大图前后翻页翻到哪张，底层预览就切到哪个媒体（全屏查看可切换媒体）。
+ * 第二段接内容模型里的其余图片字段（无媒体行、不带动切换），顺序与侧栏「图片」卡片一致。
+ * 媒体行整体不可解析（如 media:// 占位）时，保底回退预览图字段，维持老数据的可放大能力。
  */
-function imageSlides(asset: Asset, siteId: string, imageAssetIds?: string[]): LightboxSlide[] {
-  const target = previewTarget(asset);
-  const mainId = target.assetId || imageAssetIds?.[0] || mediaAssetId(asset.thumbnail) || '';
+function imageSlides(asset: Asset, siteId: string, imageAssetIds?: string[], mediaList: MediaItem[] = []): LightboxSlide[] {
   const seen = new Set<string>();
   const slides: LightboxSlide[] = [];
-  if (target.url) {
-    slides.push({ url: target.url });
-  } else if (mainId && siteId) {
-    slides.push({ url: mediaThumbUrl(siteId, mainId) });
-    seen.add(mainId);
-  }
+  mediaList.forEach((item, index) => {
+    const row: Asset = {
+      ...asset,
+      kind: item.kind ?? asset.kind,
+      storageUri: item.storageUri,
+      thumbnail: item.thumbnail ?? '',
+      mediaList
+    };
+    if (previewKind(row.kind) !== 'image') return;
+    const target = previewTarget(row);
+    if (target.url) {
+      slides.push({ url: target.url, mediaIndex: index });
+      return;
+    }
+    if (target.assetId && siteId && !seen.has(target.assetId)) {
+      seen.add(target.assetId);
+      slides.push({ url: mediaThumbUrl(siteId, target.assetId), mediaIndex: index });
+    }
+  });
   for (const id of imageAssetIds ?? []) {
     if (!id || !siteId || seen.has(id)) continue;
     seen.add(id);
     slides.push({ url: mediaThumbUrl(siteId, id) });
+  }
+  if (slides.length === 0) {
+    const fallback = mediaAssetId(asset.thumbnail);
+    if (fallback && siteId) slides.push({ url: mediaThumbUrl(siteId, fallback) });
   }
   return slides;
 }
@@ -293,6 +368,23 @@ function IconSearch() {
       <circle cx="10.5" cy="10.5" r="6.25" />
       <path d="M7.6 10.5h5.8M10.5 7.6v5.8" />
       <path d="M15 15l4.5 4.5" />
+    </svg>
+  );
+}
+
+/** 图片悬停箭头：与大图层同一支雪佛龙，26px 在 40px 圆钮里最清楚（CSS 覆写 .preview-stage svg 全宽规则）。 */
+function IconNavLeft() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 5.5 8 12l6.5 6.5" />
+    </svg>
+  );
+}
+
+function IconNavRight() {
+  return (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.5 5.5 16 12l-6.5 6.5" />
     </svg>
   );
 }

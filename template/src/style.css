@@ -1274,6 +1274,151 @@ select.select {
 /* 舞台里那条 `.preview-stage svg { width:100%; height:100% }` 是给占位图形用的，
    按钮内的小图标必须按更高特异性覆写回来，否则会被拉成整块画布大小。 */
 .preview-stage .view-large svg { width: 16px; height: 16px; flex: 0 0 auto; }
+
+/* ---- 图片预览悬停箭头：鼠标移入图片（舞台）时左右两侧浮现，点击环绕切换关联媒体 ---- */
+.preview-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, .34);
+  border-radius: 50%;
+  background: rgba(20, 27, 38, .72);
+  color: #fff;
+  cursor: pointer;
+  /* 与 .view-large 同法：隐藏期保留在 Tab 序列里（键盘可达），另给 pointer-events:none
+     免得看不见的按钮白占图片两侧、吃掉普通点击。 */
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease, background .15s ease, border-color .15s ease;
+}
+.preview-nav.prev { left: 14px; }
+.preview-nav.next { right: 14px; }
+.preview-stage:hover .preview-nav,
+.preview-nav:hover,
+.preview-nav:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.preview-nav:hover { background: var(--primary); border-color: var(--primary); }
+/* 触屏没有 hover：不常显的话切换入口在移动端等于不存在。 */
+@media (hover: none) {
+  .preview-nav { opacity: 1; pointer-events: auto; }
+}
+.preview-stage .preview-nav svg { width: 26px; height: 26px; flex: 0 0 auto; }
+
+/* ---- 媒体切换条：舞台与信息行之间的一行媒体芯片，点击切换预览（多于一个媒体才渲染） ---- */
+.media-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: 10px var(--sp-5);
+  border-top: 1px solid var(--border);
+}
+.media-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-btn);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease;
+}
+.media-chip:hover { border-color: var(--primary); color: var(--text-1); }
+.media-chip.is-on {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+  font-weight: 600;
+}
+.media-chip-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--fill-neutral);
+  font-size: 11px;
+  font-weight: 600;
+}
+.media-chip.is-on .media-chip-no { background: rgba(255, 255, 255, .24); }
+.media-chip-kind { flex: 0 0 auto; }
+.media-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- 详情页「媒体列表」页签：列出全部关联媒体，点击任意一项即切换预览 ---- */
+.media-list { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-5); }
+.media-list-hint { font-size: 12px; color: var(--text-2); }
+.media-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-btn);
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.media-list-item:hover { border-color: var(--primary); }
+.media-list-item.is-on { border-color: var(--primary); background: var(--fill-neutral); }
+.media-item-thumb {
+  flex: 0 0 72px;
+  width: 72px;
+  height: 48px;
+  border-radius: var(--r-btn);
+  overflow: hidden;
+  background: linear-gradient(135deg, #31435C 0%, #1C2738 100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.media-item-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.media-item-thumb-empty { color: rgba(255, 255, 255, .85); font-size: 11px; }
+.media-item-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.media-item-title { font-size: 13px; font-weight: 600; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-item-sub { font-size: 12px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-item-no {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--fill-neutral);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.media-item-on {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--primary);
+  border-radius: var(--r-btn);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 /* ---- 图片大图查看层：铺满整个浏览器窗口 ---- */
 .lb-backdrop {
   position: fixed;
@@ -2008,3 +2153,44 @@ select.select {
 .form-error { margin: 0; color: var(--danger, #D93025); font-size: 13px; }
 .asset-star { width: 28px; height: 28px; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center; }
 .asset-star.is-off svg path { fill: #DADCE0; }
+
+/* ===== 上传中心：关联媒体编辑器与媒体库选择弹窗 ===== */
+.linked-media { padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--border); }
+.linked-media-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+.linked-media-head h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-1); }
+.linked-media-sub { font-size: 12px; color: var(--text-3); flex: 1; min-width: 200px; }
+.linked-media-actions { display: inline-flex; gap: var(--sp-2); }
+.linked-media-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+.linked-media-row {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-card);
+  background: var(--surface);
+}
+.linked-media-row .media-item-thumb { width: 44px; height: 32px; border-radius: 6px; overflow: hidden; flex: none; background: var(--fill-neutral); display: inline-flex; align-items: center; justify-content: center; }
+.linked-media-row .media-item-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.linked-media-row .media-item-title { font-size: 13px; font-weight: 500; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked-media-row .media-item-sub { font-size: 12px; color: var(--text-3); }
+
+.modal-mask {
+  position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center;
+  background: rgba(15, 20, 28, .45); backdrop-filter: blur(2px); padding: var(--sp-5);
+}
+.modal-card {
+  background: var(--surface); border-radius: var(--r-card, 12px); box-shadow: 0 18px 48px rgba(0, 0, 0, .25);
+  width: min(720px, 100%); max-height: 82vh; display: flex; flex-direction: column; overflow: hidden;
+}
+.modal-head { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border-bottom: 1px solid var(--border); }
+.modal-title { font-size: 15px; font-weight: 600; color: var(--text-1); flex: 1; }
+.picker-kind { height: 30px; border: 1px solid var(--border-strong); border-radius: var(--r-btn, 8px); background: var(--surface); color: var(--text-1); font: inherit; font-size: 12px; padding: 0 var(--sp-2); }
+.picker-list { overflow-y: auto; padding: var(--sp-3) var(--sp-5) var(--sp-5); display: flex; flex-direction: column; gap: var(--sp-2); }
+.picker-row {
+  display: flex; align-items: center; gap: var(--sp-3); text-align: left; width: 100%;
+  padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-card);
+  background: var(--surface); cursor: pointer; font: inherit;
+}
+.picker-row:hover { border-color: var(--primary); background: var(--fill-neutral); }
+.picker-row .media-item-thumb { width: 52px; height: 38px; border-radius: 6px; overflow: hidden; flex: none; background: var(--fill-neutral); display: inline-flex; align-items: center; justify-content: center; }
+.picker-row .media-item-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.picker-row .media-item-title { font-size: 13px; font-weight: 500; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-row .media-item-sub { font-size: 12px; color: var(--text-3); }
+.picker-add { flex: none; font-size: 12px; font-weight: 500; color: var(--primary); }

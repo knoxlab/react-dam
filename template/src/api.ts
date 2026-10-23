@@ -6,6 +6,7 @@ import type {
   AssetVersion,
   Catalog,
   License,
+  MediaItem,
   MemberGrant,
   ResourceGroup,
   ShareLink
@@ -97,8 +98,54 @@ function toAsset(row: ContentRow): Asset {
     updatedAt: text(row, 'updatedAt'),
     viewCount: number(fields, 'viewCount'),
     publishedAt: text(fields, 'createdAt') || text(row, 'updatedAt'),
-    values: fieldValues(fields)
+    values: fieldValues(fields),
+    mediaList: toMediaList(fields)
   };
+}
+
+/**
+ * 关联媒体列表：优先取内容类型 `media_items` 重复组（备选历史键 `media_list`）的行数组；
+ * 老数据/会员上传没有重复组时，回退顶层单媒体字段（storage_uri_s 等）推导出唯一一行 ——
+ * 两条路径都给出非空列表，预览与切换逻辑不必再各自兜底。
+ */
+function toMediaList(fields: Record<string, unknown>): MediaItem[] {
+  const raw = fields['media_items'] ?? fields['media_list'];
+  const items: MediaItem[] = [];
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      if (!entry || typeof entry !== 'object') continue;
+      const row = entry as Record<string, unknown>;
+      // 行内键以 media_ 前缀为准，同时兼容与顶层同名的写法（导入/迁移期可能出现）
+      const storageUri = text(row, 'media_storage_uri_s') || text(row, 'storage_uri_s');
+      const thumbnail = text(row, 'media_thumbnail_url_s') || text(row, 'thumbnail_url_s');
+      const title = text(row, 'media_title_s') || text(row, 'title_s');
+      const mime = text(row, 'media_mime_type_s') || text(row, 'mime_type_s');
+      const bytes = number(row, 'media_file_size_i') || number(row, 'file_size_i');
+      const rawKind = text(row, 'media_kind_s') || text(row, 'asset_kind_s');
+      if (!storageUri && !thumbnail && !title) continue;
+      items.push({
+        title,
+        storageUri,
+        kind: (KINDS as string[]).includes(rawKind) ? (rawKind as AssetKind) : undefined,
+        mime,
+        bytes,
+        thumbnail
+      });
+    }
+    if (items.length > 0) return items;
+  }
+  // 历史单媒体字段：主原件 + 预览图，最多一行
+  const storageUri = text(fields, 'storage_uri_s');
+  const thumbnail = text(fields, 'thumbnail_url_s');
+  if (!storageUri && !thumbnail) return [];
+  return [{
+    title: '',
+    storageUri,
+    kind: undefined,
+    mime: text(fields, 'mime_type_s'),
+    bytes: number(fields, 'file_size_i'),
+    thumbnail
+  }];
 }
 
 function fieldValues(fields: Record<string, unknown>): Record<string, string> {
@@ -389,6 +436,40 @@ export const MEMBER_LIBRARY_MISSING = '会员空间接口尚未加载，请重�
 
 export type MemberUpload = { id: string; title: string; status: string; updatedAt: string };
 export type MemberMark = { contentId: string; at: string };
+
+/** 站点媒体库行（登录会员）：上传中心「从媒体库选择」关联媒体并自动填写表单元数据。 */
+export interface LibraryMediaRow {
+  id: string;
+  title: string;
+  filename: string;
+  kind: string;
+  mimeType: string;
+  fileSize: number;
+  tags: string;
+  summary: string;
+  folderPath: string;
+  createdAt: string;
+}
+
+export async function loadMediaLibrary(siteId: string, kind?: string): Promise<LibraryMediaRow[]> {
+  const query = kind ? `?kind=${encodeURIComponent(kind)}` : '';
+  const res = await memberLibrary(siteId, `/media-library${query}`);
+  await requireMemberOk(res);
+  const rows: unknown = await res.json();
+  if (!Array.isArray(rows)) return [];
+  return (rows as Record<string, unknown>[]).map((row) => ({
+    id: String(row.id ?? ''),
+    title: String(row.title ?? ''),
+    filename: String(row.filename ?? ''),
+    kind: String(row.kind ?? ''),
+    mimeType: String(row.mimeType ?? ''),
+    fileSize: Number(row.fileSize ?? 0),
+    tags: String(row.tags ?? ''),
+    summary: String(row.summary ?? ''),
+    folderPath: String(row.folderPath ?? ''),
+    createdAt: String(row.createdAt ?? '')
+  })).filter((row) => row.id);
+}
 
 async function memberLibrary(siteId: string, path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
