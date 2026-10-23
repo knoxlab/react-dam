@@ -3,7 +3,6 @@ import { AccountBar } from '../account';
 import {
   createMemberUpload,
   loadContentForm,
-  loadCurrentMember,
   loadMediaLibrary,
   uploadMemberFile,
   type ContentForm,
@@ -80,7 +79,7 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
-  const [memberGroups, setMemberGroups] = useState<string[]>([]);
+  const [formTab, setFormTab] = useState(0);
   const seeded = useRef(false);
   const allowed = props.folders.some((folder) => folder.id === folderId) ? folderId : '';
   const folder = props.folders.find((item) => item.id === allowed);
@@ -103,9 +102,15 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
     if (done.length === 0) {
       setShowForm(false);
       setLinked([]);
+      setFormTab(0);
       seeded.current = false;
     }
   }, [done.length]);
+
+  // 打开填写表单时回到第一个页签（关联媒体）
+  useEffect(() => {
+    if (showForm) setFormTab(0);
+  }, [showForm]);
 
   useEffect(() => {
     if (!props.siteId || !showForm || done.length === 0) return;
@@ -131,8 +136,8 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
     if (!form || seeded.current || done.length === 0) return;
     seeded.current = true;
     const first = done[0];
-    setValues((current) => ({ ...initialValues(fields, first, folder?.title ?? ''), ...current }));
-  }, [form, done, fields, folder?.title]);
+    setValues((current) => ({ ...initialValues(fields, first), ...current }));
+  }, [form, done, fields]);
 
   // 上传完成的文件自动成为关联媒体行（多文件 → 一个资源的多个关联媒体）
   useEffect(() => {
@@ -145,43 +150,6 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
       return added.length ? [...current, ...added] : current;
     });
   }, [done]);
-
-  useEffect(() => {
-    if (!form) return;
-    const folderTitle = folder?.title ?? '';
-    if (folderTitle && !values.resource_group_s) {
-      setValues((current) => (current.resource_group_s ? current : { ...current, resource_group_s: folderTitle }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, folder?.title]);
-
-  // 当前会员组（如「市场部」）：所属部门的自动填写来源，仅取一次。
-  // access-member / access-vip 是通用会员等级组、不表达部门，优先取部门类分组
-  // （如站点上绑定的 dam-mkt「市场部」），全部为通用组时才回退首个组名。
-  useEffect(() => {
-    let cancelled = false;
-    void loadCurrentMember()
-      .then((me) => {
-        if (cancelled || !me) return;
-        const names = me.groups.map((name, index) => ({ name, code: me.groupCodes[index] ?? '' }));
-        const departments = names.filter((entry) => entry.name && !entry.code.startsWith('access-'));
-        setMemberGroups((departments.length > 0 ? departments : names)
-          .map((entry) => entry.name.trim())
-          .filter((name) => name.length > 0));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // 所属部门自动填写：表单打开后若仍为空，取当前会员的首个会员组（不覆盖用户输入）
-  useEffect(() => {
-    if (!form || !showForm || memberGroups.length === 0) return;
-    const department = memberGroups[0];
-    setValues((current) => (current.department_s?.trim() ? current : { ...current, department_s: department }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, showForm, memberGroups]);
 
   function patchItem(id: string, partial: Partial<QueueItem>) {
     if (dropped.current.has(id)) return;
@@ -378,6 +346,69 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
     }
   }
 
+  // 关联媒体编辑器：本次上传的多个文件与从媒体库选择的已有媒体，整体写入 media_items 重复组。
+  // 表单页签化后，它只出现在「关联媒体」页签内，不再固定显示在表单下方。
+  const linkedMediaSection = (
+    <section className="linked-media">
+      <div className="linked-media-head">
+        <h3>关联媒体（{linked.length}）</h3>
+        <span className="linked-media-sub">多个媒体将作为同一资源的关联媒体；从媒体库选择媒体后，空白字段会自动填写</span>
+        <span className="linked-media-actions">
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => setPickerOpen(true)}>从媒体库选择</button>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => inputRef.current?.click()}>上传新媒体</button>
+        </span>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(event) => {
+          addFiles(event.target.files);
+          event.target.value = '';
+        }}
+      />
+      {linked.length === 0 ? (
+        <div className="card-note">还没有关联媒体。本次上传的文件会自动加入；也可从媒体库选择已有媒体。</div>
+      ) : (
+        <div className="linked-media-list">
+          {linked.map((row, index) => (
+            <div className="linked-media-row" key={row.key}>
+              <span className="media-item-thumb">
+                {row.thumb
+                  ? <KnoxImage siteId={props.siteId} assetId={row.thumb} alt="" />
+                  : <span className="media-item-thumb-empty">{kindLabel(row.kind)}</span>}
+              </span>
+              <span className="media-item-body">
+                <span className="media-item-title">{row.title || `媒体 ${index + 1}`}</span>
+                <span className="media-item-sub">
+                  {kindLabel(row.kind)}{row.mime ? ` · ${row.mime}` : ''}{row.bytes ? ` · ${formatBytes(row.bytes)}` : ''}{row.source === 'library' ? ' · 媒体库' : ' · 本次上传'}
+                </span>
+              </span>
+              <button
+                className="btn btn-ghost btn-sm"
+                type="button"
+                onClick={() => setLinked((current) => current.filter((item) => item.key !== row.key))}
+              >
+                移除
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
+  // 表单含 TAB 页签（关联媒体/资源编目）时，页签栏提升到卡片层：
+  // 「关联媒体」页签 = 关联媒体编辑器；其余页签 = 该页字段表单（asset-form 原生样式）。
+  // 含重复组(REPEAT_GROUP)的页签视为关联媒体页。
+  const tabNode = form?.nodes.find((node) => node.elementType === 'TAB' && (node.children ?? []).length > 0) ?? null;
+  const formPages = tabNode?.children ?? [];
+  const mediaPageIndex = formPages.findIndex((page) =>
+    (page.children ?? []).some((child) => child.elementType === 'REPEAT_GROUP')
+  );
+  const tabbed = formPages.length > 0 && mediaPageIndex >= 0;
+
   if (showForm && done.length > 0) {
     return (
       <Page>
@@ -403,58 +434,48 @@ export function UploadPage(props: { folders: ResourceGroup[]; siteId: string; on
             {formError ? <div className="card-note">{formError}</div> : null}
             {submitError ? <div className="card-note" style={{ color: 'var(--danger-text)' }}>{submitError}</div> : null}
             {!form && !formError ? <div className="card-note">正在读取数字资源表单…</div> : null}
+            {/* 页签化表单：关联媒体页签 = 关联媒体编辑器；资源编目等页签 = 字段表单 */}
             {form ? (
-              <FormNodes nodes={form.nodes} values={values} siteId={props.siteId} folderId={allowed} onChange={changeValue} />
-            ) : null}
-            {/* 关联媒体：本次上传的多个文件与从媒体库选择的已有媒体，整体写入 media_items 重复组 */}
-            <section className="linked-media">
-              <div className="linked-media-head">
-                <h3>关联媒体（{linked.length}）</h3>
-                <span className="linked-media-sub">多个媒体将作为同一资源的关联媒体；从媒体库选择媒体后，空白字段会自动填写</span>
-                <span className="linked-media-actions">
-                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => setPickerOpen(true)}>从媒体库选择</button>
-                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => inputRef.current?.click()}>上传新媒体</button>
-                </span>
-              </div>
-              <input
-                ref={inputRef}
-                type="file"
-                multiple
-                hidden
-                onChange={(event) => {
-                  addFiles(event.target.files);
-                  event.target.value = '';
-                }}
-              />
-              {linked.length === 0 ? (
-                <div className="card-note">还没有关联媒体。本次上传的文件会自动加入；也可从媒体库选择已有媒体。</div>
-              ) : (
-                <div className="linked-media-list">
-                  {linked.map((row, index) => (
-                    <div className="linked-media-row" key={row.key}>
-                      <span className="media-item-thumb">
-                        {row.thumb
-                          ? <KnoxImage siteId={props.siteId} assetId={row.thumb} alt="" />
-                          : <span className="media-item-thumb-empty">{kindLabel(row.kind)}</span>}
-                      </span>
-                      <span className="media-item-body">
-                        <span className="media-item-title">{row.title || `媒体 ${index + 1}`}</span>
-                        <span className="media-item-sub">
-                          {kindLabel(row.kind)}{row.mime ? ` · ${row.mime}` : ''}{row.bytes ? ` · ${formatBytes(row.bytes)}` : ''}{row.source === 'library' ? ' · 媒体库' : ' · 本次上传'}
-                        </span>
-                      </span>
+              tabbed ? (
+                <>
+                  <div className="tabs asset-form-tabs" role="tablist">
+                    {formPages.map((page, index) => (
                       <button
-                        className="btn btn-ghost btn-sm"
+                        key={page.title || index}
+                        className={`tab ${index === formTab ? 'active' : ''}`}
                         type="button"
-                        onClick={() => setLinked((current) => current.filter((item) => item.key !== row.key))}
+                        role="tab"
+                        aria-selected={index === formTab}
+                        onClick={() => setFormTab(index)}
                       >
-                        移除
+                        <span>{page.title || `页签 ${index + 1}`}</span>
                       </button>
+                    ))}
+                  </div>
+                  {formTab === mediaPageIndex ? (
+                    linkedMediaSection
+                  ) : (
+                    <div className="asset-form">
+                      <FormNodes
+                        nodes={formPages[formTab]?.children ?? []}
+                        values={values}
+                        siteId={props.siteId}
+                        folderId={allowed}
+                        onChange={changeValue}
+                      />
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* asset-form：字段纵向堆叠/标签/控件宽度的既有样式（裸 label 不套这层会横排错乱） */}
+                  <div className="asset-form">
+                    <FormNodes nodes={form.nodes} values={values} siteId={props.siteId} folderId={allowed} onChange={changeValue} />
+                  </div>
+                  {linkedMediaSection}
+                </>
+              )
+            ) : null}
             <div className="form-actions">
               <button className="btn btn-ghost" type="button" disabled={submitting} onClick={cancelForm}>取消</button>
               <button className="btn btn-primary" type="button" disabled={submitting || !form} onClick={() => void submitForm()}>
@@ -883,16 +904,14 @@ function collectFields(nodes: ContentFormNode[]): ContentFormField[] {
   return fields;
 }
 
-function initialValues(fields: ContentFormField[], item: QueueItem, folderTitle: string): Record<string, string> {
+function initialValues(fields: ContentFormField[], item: QueueItem): Record<string, string> {
   const values: Record<string, string> = {};
   for (const field of fields) {
     let value = field.defaultValue ?? '';
     if (field.code === 'mime_type_s' && item.mime) value = item.mime;
     if (field.code === 'file_size_i') value = String(item.size);
     if (field.code === 'asset_kind_s') value = item.kind;
-    if (field.code === 'resource_group_s' && folderTitle) value = folderTitle;
     if (field.code === 'asset_code_s' && !value) value = item.name.replace(/\.[^.]+$/, '') || item.name;
-    if (field.code === 'approval_status_s') value = 'pending';
     if (field.fieldType === 'MEDIA_REF' && !value) value = item.assetId;
     values[field.code] = value;
   }

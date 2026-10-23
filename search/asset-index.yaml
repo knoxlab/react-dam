@@ -12,14 +12,8 @@ query:
 filters:
   - field: asset_kind_s
     label: 资源类型
-  - field: department_s
-    label: 部门
-  - field: resource_group_s
-    label: 栏目名称
   - field: license_s
     label: 许可协议
-  - field: approval_status_s
-    label: 审批状态
   - field: tags_ss
     label: 人工标签
     note: 进入访客全文索引。TAG 不能作为筛选字段，前台在已加载结果里过滤。

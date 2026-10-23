@@ -1,8 +1,8 @@
 code: asset-approval
 name: 数字资源审批
 description: >
-  与 digital_asset.approval_status_s 对齐的审批流。
-  站点包导入不会自动创建工作流，请在管理端按本定义配置，或复用站点的系统工作流并把状态写回该字段。
+  数字资源审批流（2026-10-23 起审批状态由工作流承载，不再写回 approval_status_s 字段）。
+  站点包导入不会自动创建工作流，请在管理端按本定义配置。
 states:
   - code: draft
     name: 草稿

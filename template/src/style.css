@@ -2155,6 +2155,9 @@ select.select {
 .asset-star.is-off svg path { fill: #DADCE0; }
 
 /* ===== 上传中心：关联媒体编辑器与媒体库选择弹窗 ===== */
+/* 页签化表单：页签栏位于卡片顶部，关联媒体页签内容紧随其后（去掉与页签栏重复的分隔线） */
+.asset-form-tabs { padding-left: var(--sp-3); }
+.asset-form-tabs + .linked-media { border-top: 0; padding-top: var(--sp-5); }
 .linked-media { padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--border); }
 .linked-media-head { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-3); }
 .linked-media-head h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-1); }

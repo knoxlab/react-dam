@@ -155,55 +155,17 @@ fields:
     name: 版权到期
     fieldType: DATE_TIME
     groupName: 版权
-  - code: department_s
-    name: 所属部门
-    fieldType: STRING
-    required: true
-    groupName: 权限
-    filterable: true
-    adminIndex: true
-  - code: resource_group_s
-    name: 资源组
-    fieldType: STRING
-    required: true
-    groupName: 权限
-    filterable: true
-    helpText: 栏目名称，与站点文件夹标题一致，便于检索。授权在栏目上授予会员组，不由本字段判定。
-  - code: version_label_s
-    name: 当前版本
-    fieldType: STRING
-    groupName: 版本
-  - code: approval_status_s
-    name: 审批状态
-    fieldType: ENUM
-    required: true
-    groupName: 版本
-    filterable: true
-    adminIndex: true
-    fieldConfig:
-      options:
-        - value: draft
-          label: 草稿
-        - value: pending
-          label: 待审批
-        - value: approved
-          label: 已通过
-        - value: rejected
-          label: 已驳回
-  - code: download_ttl_i
-    name: 下载链接有效期
-    fieldType: INTEGER
-    groupName: 分发
-    defaultValue: "300"
-    helpText: 单位为秒，对应签名下载链接的 TTL。
-# 设计画布布局：两个页签 —— 1. 关联媒体；2. 元数据（导入时生成 TAB 结构，导出时往返保真）。
+# 设计画布布局：两个页签 —— 1. 关联媒体；2. 资源编目（导入时生成 TAB 结构，导出时往返保真）。
+# title_s 为系统字段（标题），可直接在页签里引用，置于「资源编目」首位。
+# 所属部门/资源组/当前版本/审批状态/下载链接有效期已退役（2026-10-23）：不再进表单。
 layout:
   tabs:
     - title: 关联媒体
       fields:
         - media_items
-    - title: 元数据
+    - title: 资源编目
       fields:
+        - title_s
         - asset_code_s
         - asset_kind_s
         - summary_t
@@ -216,8 +178,3 @@ layout:
         - copyright_owner_s
         - license_s
         - copyright_until_dt
-        - department_s
-        - resource_group_s
-        - version_label_s
-        - approval_status_s
-        - download_ttl_i
