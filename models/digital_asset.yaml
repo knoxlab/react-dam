@@ -1,6 +1,9 @@
 code: digital_asset
 name: 数字资源
 description: 图片、音视频、文档与其他资源的统一目录。二进制文件由站点自动预置的 media_* 模型存储，本模型保存可检索的元数据。
+# 客户端表单控制器（FR-CM-FORMCTRL-001）：脚本随模板工程一起分发（template/scripts/...），
+# 导入后内容编辑器自动加载 —— 选媒体后补齐目录字段，并按许可协议/资源类型做条件显示。
+formController: /scripts/digital-asset-form-controller.js
 fields:
   - code: asset_code_s
     name: 资源编码
