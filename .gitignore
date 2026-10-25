@@ -1,0 +1,22 @@
+# Node / 前端构建产物
+node_modules/
+dist/
+dist-*/
+*.local
+.vite/
+*.tsbuildinfo
+coverage/
+
+# 日志与临时文件
+*.log
+logs/
+tmp/
+
+# 环境与凭据（禁止提交明文凭据）
+.env
+.env.*
+!.env.example
+
+# 操作系统
+.DS_Store
+Thumbs.db
